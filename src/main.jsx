@@ -12,7 +12,6 @@ import {
   ShieldCheck,
   LogOut,
   ChevronRight,
-  MoreHorizontal,
   X,
   Download,
   Trash2,
@@ -20,7 +19,6 @@ import {
   Check,
   Clock3,
   Building2,
-  MapPin,
   ExternalLink,
   LoaderCircle,
   Leaf,
@@ -63,7 +61,7 @@ async function request(path, options = {}) {
   });
   if (!res.ok) {
     const e = await res.json().catch(() => ({ error: "Request failed." }));
-    throw Error(e.error || "Request failed.");
+    throw new Error(e.error || "Request failed.");
   }
   return res.status === 204 ? null : res.json();
 }
@@ -74,6 +72,70 @@ function download(name, text, type = "text/plain") {
   a.download = name;
   a.click();
   setTimeout(() => URL.revokeObjectURL(u), 1000);
+}
+function useDialogFocusTrap(enabled, setModal, setSelected) {
+  useEffect(() => {
+    if (!enabled) return;
+    const previous = document.activeElement;
+    const dialogs = document.querySelectorAll("dialog[open]");
+    const active = dialogs[dialogs.length - 1];
+    if (!active) return;
+    const nodes = () =>
+      Array.from(
+        active.querySelectorAll(
+          'button:not(:disabled),a[href],input:not(:disabled),select:not(:disabled),textarea:not(:disabled),[tabindex="0"]',
+        ),
+      ).filter((el) => el.offsetParent !== null);
+    nodes()[0]?.focus();
+    const keys = (e) => {
+      if (e.key === "Escape") {
+        setModal(false);
+        setSelected(null);
+      }
+      if (e.key === "Tab") {
+        const list = nodes(),
+          first = list[0],
+          last = list.at(-1);
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last?.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first?.focus();
+        }
+      }
+    };
+    const overflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    document.addEventListener("keydown", keys);
+    return () => {
+      document.body.style.overflow = overflow;
+      document.removeEventListener("keydown", keys);
+      previous?.focus();
+    };
+  }, [enabled, setModal, setSelected]);
+}
+function getWorkspaceLabel(local, demo) {
+  if (!local) return "Private workspace";
+  if (demo) return "Local demo · template preview";
+  return "Local workspace · Bedrock";
+}
+function getPageHeading(tab) {
+  const headings = {
+    Overview: "Your next chapter, organised.",
+    Documents: "Your story, thoughtfully told.",
+  };
+  return headings[tab] || "Good things are in progress.";
+}
+function getPageDescription(tab) {
+  if (tab === "Documents")
+    return "Every tailored CV and cover letter, saved with its opportunity.";
+  return "A little structure for the big things ahead. You’ve got this.";
+}
+function getTailorButtonLabel(busy, demo) {
+  if (busy) return "Preparing your documents…";
+  if (demo) return "Create demo preview";
+  return "Tailor to this role";
 }
 const samples = [
   {
@@ -127,55 +189,17 @@ function App() {
     setToast(t);
     setTimeout(() => setToast(""), 4000);
   };
-  useEffect(() => {
-    if (!modal && !selected) return;
-    const previous = document.activeElement;
-    const dialog = document.querySelectorAll('[role="dialog"]');
-    const active = dialog[dialog.length - 1];
-    const nodes = () =>
-      Array.from(
-        active.querySelectorAll(
-          'button:not(:disabled),a[href],input:not(:disabled),select:not(:disabled),textarea:not(:disabled),[tabindex="0"]',
-        ),
-      ).filter((el) => el.offsetParent !== null);
-    nodes()[0]?.focus();
-    const keys = (e) => {
-      if (e.key === "Escape") {
-        setModal(false);
-        setSelected(null);
-      }
-      if (e.key === "Tab") {
-        const list = nodes(),
-          first = list[0],
-          last = list.at(-1);
-        if (e.shiftKey && document.activeElement === first) {
-          e.preventDefault();
-          last?.focus();
-        } else if (!e.shiftKey && document.activeElement === last) {
-          e.preventDefault();
-          first?.focus();
-        }
-      }
-    };
-    const overflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    document.addEventListener("keydown", keys);
-    return () => {
-      document.body.style.overflow = overflow;
-      document.removeEventListener("keydown", keys);
-      previous?.focus();
-    };
-  }, [modal, selected?.id]);
+  useDialogFocusTrap(modal || Boolean(selected), setModal, setSelected);
   const refresh = async () => {
     const data = await request("/api/jobs");
     setJobs(data.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)));
   };
   useEffect(() => {
-    (async () => {
+    void (async () => {
       try {
         config = await fetch("/config.json", { cache: "no-store" }).then(
           (r) => {
-            if (!r.ok) throw Error("Workspace configuration is unavailable.");
+            if (!r.ok) throw new Error("Workspace configuration is unavailable.");
             return r.json();
           },
         );
@@ -224,7 +248,7 @@ function App() {
   };
   const save = (e) => {
     e.preventDefault();
-    perform(async () => {
+    void perform(async () => {
       const job = await request("/api/jobs", {
         method: "POST",
         body: JSON.stringify(form),
@@ -241,8 +265,9 @@ function App() {
   };
   const loadSamples = () =>
     perform(async () => {
-      for (const sample of samples)
-        await request("/api/jobs", {
+      await Promise.all(
+        samples.map((sample) =>
+          request("/api/jobs", {
           method: "POST",
           body: JSON.stringify({
             ...initial,
@@ -250,7 +275,9 @@ function App() {
             notes:
               "Example application for exploring Folio. Replace with your own details.",
           }),
-        });
+          }),
+        ),
+      );
       await refresh();
       notify("Example applications added");
     });
@@ -294,7 +321,7 @@ function App() {
         <div className="brand">
           <span className="brandmark">
             <Leaf size={24} />
-          </span>
+          </span>{" "}
           folio<span className="brand-dot">.</span>
         </div>
         <p className="eyebrow">YOUR NEXT CHAPTER STARTS HERE</p>
@@ -317,7 +344,7 @@ function App() {
         ) : (
           <button
             className="primary"
-            onClick={() => perform(() => manager.signinRedirect())}
+            onClick={() => void perform(() => manager.signinRedirect())}
           >
             Sign in securely <ArrowRight size={17} />
           </button>
@@ -333,7 +360,7 @@ function App() {
         <a className="brand" href="/">
           <span className="brandmark">
             <Leaf size={24} />
-          </span>
+          </span>{" "}
           folio<span className="brand-dot">.</span>
         </a>
         <div className="workspace-label">YOUR WORKSPACE</div>
@@ -379,7 +406,7 @@ function App() {
           </span>
           <button
             onClick={() =>
-              perform(async () =>
+              void perform(async () =>
                 download(
                   "folio-export.json",
                   JSON.stringify(await request("/api/export"), null, 2),
@@ -403,7 +430,7 @@ function App() {
               <button
                 aria-label="Sign out"
                 onClick={() =>
-                  perform(async () => {
+                  void perform(async () => {
                     await manager.removeUser();
                     location.assign(
                       `${config.logoutUrl}?client_id=${encodeURIComponent(config.clientId)}&logout_uri=${encodeURIComponent(location.origin + "/")}`,
@@ -425,11 +452,7 @@ function App() {
           </div>
           <span className="private">
             <span />
-            {config.local
-              ? config.demo
-                ? "Local demo · template preview"
-                : "Local workspace · Bedrock"
-              : "Private workspace"}
+            {getWorkspaceLabel(config.local, config.demo)}
           </span>
         </header>
         <main className="content">
@@ -437,16 +460,10 @@ function App() {
             <div>
               <div className="eyebrow">MAKE YOUR NEXT MOVE</div>
               <h1>
-                {tab === "Overview"
-                  ? "Your next chapter, organised."
-                  : tab === "Documents"
-                    ? "Your story, thoughtfully told."
-                    : "Good things are in progress."}
+                {getPageHeading(tab)}
               </h1>
               <p>
-                {tab === "Documents"
-                  ? "Every tailored CV and cover letter, saved with its opportunity."
-                  : "A little structure for the big things ahead. You’ve got this."}
+                {getPageDescription(tab)}
               </p>
             </div>
             <button className="primary" onClick={() => setModal(true)}>
@@ -629,7 +646,7 @@ function App() {
                             <span
                               className={
                                 "company-logo logo-" +
-                                (j.company.charCodeAt(0) % 4)
+                                (j.company.codePointAt(0) % 4)
                               }
                             >
                               {j.company.slice(0, 1).toUpperCase()}
@@ -699,7 +716,7 @@ function App() {
                         <button
                           className="text-button"
                           disabled={busy}
-                          onClick={loadSamples}
+                          onClick={() => void loadSamples()}
                         >
                           Explore with example applications
                         </button>
@@ -730,19 +747,14 @@ function App() {
         </main>
       </div>
       {toast && (
-        <div role="status" className="toast">
+        <output className="toast">
           <Check size={17} />
           {toast}
-        </div>
+        </output>
       )}
       {modal && (
         <div className="overlay">
-          <section
-            className="modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="new-title"
-          >
+          <dialog className="modal" aria-labelledby="new-title" open>
             <button
               className="close"
               aria-label="Close"
@@ -756,7 +768,7 @@ function App() {
             <form onSubmit={save}>
               <div className="form-row">
                 <label>
-                  Company
+                  <span>Company</span>
                   <input
                     autoFocus
                     required
@@ -768,7 +780,7 @@ function App() {
                   />
                 </label>
                 <label>
-                  Job title
+                  <span>Job title</span>
                   <input
                     required
                     maxLength={160}
@@ -779,7 +791,7 @@ function App() {
               </div>
               <div className="form-row">
                 <label>
-                  Location
+                  <span>Location</span>
                   <input
                     maxLength={160}
                     value={form.location}
@@ -789,7 +801,7 @@ function App() {
                   />
                 </label>
                 <label>
-                  Status
+                  <span>Status</span>
                   <select
                     value={form.status}
                     onChange={(e) =>
@@ -803,7 +815,7 @@ function App() {
                 </label>
               </div>
               <label>
-                Job link
+                <span>Job link</span>
                 <input
                   type="url"
                   placeholder="https://…"
@@ -812,7 +824,7 @@ function App() {
                 />
               </label>
               <label>
-                Job description
+                <span>Job description</span>
                 <textarea
                   rows={5}
                   maxLength={18000}
@@ -824,7 +836,7 @@ function App() {
                 />
               </label>
               <label>
-                Private notes
+                <span>Private notes</span>
                 <textarea
                   rows={2}
                   maxLength={6000}
@@ -837,7 +849,7 @@ function App() {
                   {error}
                 </p>
               )}
-              <button className="primary full" disabled={busy}>
+              <button type="submit" className="primary full" disabled={busy}>
                 {busy ? (
                   <LoaderCircle className="spin" size={17} />
                 ) : (
@@ -846,7 +858,7 @@ function App() {
                 Save application
               </button>
             </form>
-          </section>
+          </dialog>
         </div>
       )}
       {selected && (
@@ -903,10 +915,9 @@ function Detail({ job, onClose, onUpdate, onDelete }) {
   }
   return (
     <div className="overlay drawer-overlay">
-      <section
+      <dialog
         className="drawer"
-        role="dialog"
-        aria-modal="true"
+        open
         aria-labelledby="detail-title"
       >
         <button
@@ -942,13 +953,13 @@ function Detail({ job, onClose, onUpdate, onDelete }) {
         {tab === "Details" && (
           <>
             <label>
-              Application stage
+              <span>Application stage</span>
               <select
                 aria-label="Application stage"
                 disabled={busy}
                 value={job.status}
                 onChange={(e) =>
-                  run(async () =>
+                  void run(async () =>
                     onUpdate(
                       await request(`/api/jobs/${job.id}`, {
                         method: "PATCH",
@@ -966,7 +977,7 @@ function Detail({ job, onClose, onUpdate, onDelete }) {
             <form
               onSubmit={(e) => {
                 e.preventDefault();
-                run(async () =>
+                void run(async () => {
                   onUpdate(
                     await request(`/api/jobs/${job.id}`, {
                       method: "PATCH",
@@ -975,12 +986,12 @@ function Detail({ job, onClose, onUpdate, onDelete }) {
                         notes: editing.notes,
                       }),
                     }),
-                  ),
-                );
+                  );
+                });
               }}
             >
               <label>
-                Job description
+                <span>Job description</span>
                 <textarea
                   rows={9}
                   maxLength={18000}
@@ -991,7 +1002,7 @@ function Detail({ job, onClose, onUpdate, onDelete }) {
                 />
               </label>
               <label>
-                Private notes
+                <span>Private notes</span>
                 <textarea
                   rows={4}
                   maxLength={6000}
@@ -1001,7 +1012,7 @@ function Detail({ job, onClose, onUpdate, onDelete }) {
                   }
                 />
               </label>
-              <button disabled={busy} className="secondary">
+              <button type="submit" disabled={busy} className="secondary">
                 Save details <Check size={16} />
               </button>
             </form>
@@ -1017,8 +1028,8 @@ function Detail({ job, onClose, onUpdate, onDelete }) {
             )}
             <h3 className="history-title">Application timeline</h3>
             <ol className="timeline">
-              {job.history.map((h, i) => (
-                <li key={i}>
+              {job.history.map((h) => (
+                <li key={`${h.at}-${h.status}`}>
                   <b>{h.status}</b>
                   <span>{new Date(h.at).toLocaleString()}</span>
                 </li>
@@ -1035,7 +1046,7 @@ function Detail({ job, onClose, onUpdate, onDelete }) {
                     className="danger"
                     disabled={busy}
                     onClick={() =>
-                      run(async () => {
+                      void run(async () => {
                         await request(`/api/jobs/${job.id}`, {
                           method: "DELETE",
                         });
@@ -1067,7 +1078,7 @@ function Detail({ job, onClose, onUpdate, onDelete }) {
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              run(async () => {
+              void run(async () => {
                 const result = await request(`/api/jobs/${job.id}/tailor`, {
                   method: "POST",
                   body: JSON.stringify({ cv, coverLetter: cover, consent }),
@@ -1137,17 +1148,17 @@ function Detail({ job, onClose, onUpdate, onDelete }) {
                 workspace.
               </span>
             </label>
-            <button disabled={busy || !consent} className="primary full">
+            <button
+              type="submit"
+              disabled={busy || !consent}
+              className="primary full"
+            >
               {busy ? (
                 <LoaderCircle className="spin" size={17} />
               ) : (
                 <Sparkles size={17} />
               )}{" "}
-              {busy
-                ? "Preparing your documents…"
-                : config.demo
-                  ? "Create demo preview"
-                  : "Tailor to this role"}
+              {getTailorButtonLabel(busy, config.demo)}
             </button>
             <p className="fineprint">
               Up to 8 versions per application, subject to storage limits.
@@ -1171,7 +1182,7 @@ function Detail({ job, onClose, onUpdate, onDelete }) {
           ) : (
             <>
               <label>
-                Saved version
+                <span>Saved version</span>
                 <select
                   value={version < 0 ? job.versions.length - 1 : version}
                   onChange={(e) => setVersion(Number(e.target.value))}
@@ -1193,8 +1204,8 @@ function Detail({ job, onClose, onUpdate, onDelete }) {
               </div>
               <h3>What changed</h3>
               <ul className="changes">
-                {v.changes.map((c, i) => (
-                  <li key={i}>{c}</li>
+                {v.changes.map((c) => (
+                  <li key={c}>{c}</li>
                 ))}
               </ul>
               {v.missingKeywords.length > 0 && (
@@ -1234,7 +1245,7 @@ function Detail({ job, onClose, onUpdate, onDelete }) {
               </details>
             </>
           ))}
-      </section>
+      </dialog>
     </div>
   );
 }
