@@ -18,9 +18,33 @@ assert.equal(
 const route = of("AWS::ApiGatewayV2::Route")[0];
 assert.equal(route.AuthorizationType, "JWT");
 assert.ok(route.AuthorizerId);
+assert.deepEqual(route.AuthorizationScopes, ["openid"]);
+assert.equal(of("AWS::ApiGatewayV2::Integration")[0].TimeoutInMillis, 29000);
+assert.ok(of("AWS::ApiGatewayV2::Stage")[0].AccessLogSettings.DestinationArn);
 assert.equal(of("AWS::Cognito::UserPoolClient")[0].GenerateSecret, false);
 const bucket = of("AWS::S3::Bucket")[0];
 assert.ok(Object.values(bucket.PublicAccessBlockConfiguration).every(Boolean));
+assert.ok(of("AWS::CloudFront::OriginAccessControl").length > 0);
+const distribution = of("AWS::CloudFront::Distribution")[0].DistributionConfig;
+assert.equal(
+  distribution.DefaultCacheBehavior.ViewerProtocolPolicy,
+  "redirect-to-https",
+);
+assert.ok(
+  distribution.CacheBehaviors.some(
+    (behavior) => behavior.PathPattern === "/assets/*",
+  ),
+);
+assert.equal(
+  of("AWS::Lambda::Function").find((f) => f.Environment?.Variables?.TABLE_NAME)
+    .Timeout,
+  30,
+);
+for (const resource of resources.filter((r) =>
+  ["AWS::DynamoDB::Table", "AWS::Cognito::UserPool"].includes(r.Type),
+)) {
+  assert.equal(resource.DeletionPolicy, "Retain");
+}
 assert.equal(
   of("AWS::Lambda::Function").find((f) => f.Environment?.Variables?.TABLE_NAME)
     .ReservedConcurrentExecutions,
@@ -36,5 +60,5 @@ assert.ok(model);
 assert.ok(!JSON.stringify(model.Resource).includes("*"));
 assert.ok(!JSON.stringify(template).includes("local-developer"));
 console.log(
-  "Infrastructure assertions passed: encryption, recovery, JWT, private bucket, concurrency, scoped AI permissions.",
+  "Infrastructure assertions passed: encryption, recovery, access-token scopes, timeouts, access logs, private origin, asset caching, retention, concurrency, scoped AI permissions.",
 );

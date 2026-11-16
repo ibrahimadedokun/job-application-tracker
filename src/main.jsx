@@ -52,6 +52,8 @@ const initial = {
 };
 async function request(path, options = {}) {
   const user = manager ? await manager.getUser() : null;
+  if (manager && (!user || user.expired))
+    throw new Error("Your session has expired. Sign in again to continue.");
   const res = await fetch((config.apiUrl || "") + path, {
     ...options,
     headers: {
@@ -66,12 +68,23 @@ async function request(path, options = {}) {
   return res.status === 204 ? null : res.json();
 }
 function download(name, text, type = "text/plain") {
-  const u = URL.createObjectURL(new Blob([text], { type }));
+  downloadBlob(name, new Blob([text], { type }));
+}
+function downloadBlob(name, blob) {
+  const u = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = u;
   a.download = name;
   a.click();
   setTimeout(() => URL.revokeObjectURL(u), 1000);
+}
+function safeFileName(value) {
+  return (
+    value
+      .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "-")
+      .trim()
+      .slice(0, 80) || "application"
+  );
 }
 function useDialogFocusTrap(enabled, setModal, setSelected) {
   useEffect(() => {
@@ -199,7 +212,8 @@ function App() {
       try {
         config = await fetch("/config.json", { cache: "no-store" }).then(
           (r) => {
-            if (!r.ok) throw new Error("Workspace configuration is unavailable.");
+            if (!r.ok)
+              throw new Error("Workspace configuration is unavailable.");
             return r.json();
           },
         );
@@ -210,15 +224,26 @@ function App() {
             redirect_uri: location.origin + "/",
             post_logout_redirect_uri: location.origin + "/",
             response_type: "code",
-            scope: "openid email profile",
+            scope: config.scope || "openid email profile",
             userStore: new WebStorageStateStore({
               store: window.sessionStorage,
             }),
             automaticSilentRenew: false,
           });
-          if (new URLSearchParams(location.search).has("code")) {
-            await manager.signinRedirectCallback();
-            history.replaceState({}, "", location.pathname);
+          manager.events.addAccessTokenExpired(() => {
+            setSigned(false);
+            setJobs([]);
+            setSelected(null);
+            setModal(false);
+            setError("Your session has expired. Sign in again to continue.");
+          });
+          const params = new URLSearchParams(location.search);
+          if (params.has("code") || params.has("error")) {
+            try {
+              await manager.signinRedirectCallback();
+            } finally {
+              history.replaceState({}, "", location.pathname);
+            }
           }
           const user = await manager.getUser();
           setSigned(!!user && !user.expired);
@@ -268,13 +293,13 @@ function App() {
       await Promise.all(
         samples.map((sample) =>
           request("/api/jobs", {
-          method: "POST",
-          body: JSON.stringify({
-            ...initial,
-            ...sample,
-            notes:
-              "Example application for exploring Folio. Replace with your own details.",
-          }),
+            method: "POST",
+            body: JSON.stringify({
+              ...initial,
+              ...sample,
+              notes:
+                "Example application for exploring Folio. Replace with your own details.",
+            }),
           }),
         ),
       );
@@ -344,6 +369,7 @@ function App() {
         ) : (
           <button
             className="primary"
+            disabled={!manager || busy}
             onClick={() => void perform(() => manager.signinRedirect())}
           >
             Sign in securely <ArrowRight size={17} />
@@ -431,6 +457,10 @@ function App() {
                 aria-label="Sign out"
                 onClick={() =>
                   void perform(async () => {
+                    if (config.provider === "azure") {
+                      await manager.signoutRedirect();
+                      return;
+                    }
                     await manager.removeUser();
                     location.assign(
                       `${config.logoutUrl}?client_id=${encodeURIComponent(config.clientId)}&logout_uri=${encodeURIComponent(location.origin + "/")}`,
@@ -459,12 +489,8 @@ function App() {
           <div className="page-heading">
             <div>
               <div className="eyebrow">MAKE YOUR NEXT MOVE</div>
-              <h1>
-                {getPageHeading(tab)}
-              </h1>
-              <p>
-                {getPageDescription(tab)}
-              </p>
+              <h1>{getPageHeading(tab)}</h1>
+              <p>{getPageDescription(tab)}</p>
             </div>
             <button className="primary" onClick={() => setModal(true)}>
               <Plus size={18} /> Add application
@@ -898,28 +924,44 @@ function Detail({ job, onClose, onUpdate, onDelete }) {
       setBusy(false);
     }
   };
-  async function upload(file, target) {
+  function upload(file, target, maxLength) {
     if (!file) return;
-    if (file.size > 96000) {
-      setError("Please use a text document smaller than 96 KB.");
-      return;
-    }
-    if (!/\.(txt|md)$/i.test(file.name)) {
-      setError(
-        "Use a .txt or .md document, or paste text from your PDF or Word document.",
-      );
-      return;
-    }
-    const text = await file.text();
-    target(text);
+    return run(async () => {
+      if (file.size > 10 * 1024 * 1024)
+        throw new Error("Choose a document smaller than 10 MB.");
+
+      const extension = file.name.split(".").pop()?.toLowerCase();
+      let text;
+      if (extension === "txt" || extension === "md") {
+        text = await file.text();
+      } else if (extension === "docx") {
+        const { extractDocxText } = await import("./docx-input.js");
+        text = await extractDocxText(await file.arrayBuffer());
+      } else if (extension === "pdf") {
+        const { extractPdfText } = await import("./pdf-input.js");
+        text = await extractPdfText(await file.arrayBuffer());
+      } else {
+        throw new Error("Choose a .txt, .md, .pdf, or .docx file.");
+      }
+
+      const extracted = text.trim();
+      if (!extracted) {
+        throw new Error(
+          extension === "pdf"
+            ? "No selectable text was found. Scanned PDFs require OCR, which is not supported."
+            : "No text was found in this document.",
+        );
+      }
+      if (extracted.length > maxLength)
+        throw new Error(
+          `This document contains more than ${maxLength.toLocaleString()} characters. Shorten it before uploading.`,
+        );
+      target(extracted);
+    });
   }
   return (
     <div className="overlay drawer-overlay">
-      <dialog
-        className="drawer"
-        open
-        aria-labelledby="detail-title"
-      >
+      <dialog className="drawer" open aria-labelledby="detail-title">
         <button
           className="close"
           aria-label="Close application"
@@ -1099,7 +1141,8 @@ function Detail({ job, onClose, onUpdate, onDelete }) {
               </p>
             </div>
             <label>
-              Your CV <small>Paste text or upload .txt / .md</small>
+              Your CV{" "}
+              <small>Paste text or upload .txt, .md, .pdf, or .docx</small>
               <textarea
                 required
                 minLength={30}
@@ -1112,12 +1155,19 @@ function Detail({ job, onClose, onUpdate, onDelete }) {
               <input
                 aria-label="Upload CV"
                 type="file"
-                accept=".txt,.md,text/plain,text/markdown"
-                onChange={(e) => upload(e.target.files[0], setCv)}
+                accept=".txt,.md,.pdf,.docx,text/plain,text/markdown,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                onChange={(e) => {
+                  const file = e.currentTarget.files?.[0];
+                  e.currentTarget.value = "";
+                  if (file) void upload(file, setCv, 24000);
+                }}
               />
             </label>
             <label>
-              Your cover letter <small>Optional · paste or upload text</small>
+              Your cover letter{" "}
+              <small>
+                Optional · paste text or upload .txt, .md, .pdf, or .docx
+              </small>
               <textarea
                 maxLength={12000}
                 rows={6}
@@ -1128,8 +1178,12 @@ function Detail({ job, onClose, onUpdate, onDelete }) {
               <input
                 aria-label="Upload cover letter"
                 type="file"
-                accept=".txt,.md,text/plain,text/markdown"
-                onChange={(e) => upload(e.target.files[0], setCover)}
+                accept=".txt,.md,.pdf,.docx,text/plain,text/markdown,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                onChange={(e) => {
+                  const file = e.currentTarget.files?.[0];
+                  e.currentTarget.value = "";
+                  if (file) void upload(file, setCover, 12000);
+                }}
               />
             </label>
             <label className="checkbox">
@@ -1161,8 +1215,9 @@ function Detail({ job, onClose, onUpdate, onDelete }) {
               {getTailorButtonLabel(busy, config.demo)}
             </button>
             <p className="fineprint">
-              Up to 8 versions per application, subject to storage limits.
-              Upload text only; copy text from PDF or Word files.
+              Up to 8 versions per application, subject to storage limits. PDF
+              and DOCX uploads are text-extracted; original formatting is not
+              retained.
             </p>
           </form>
         )}
@@ -1223,12 +1278,21 @@ function Detail({ job, onClose, onUpdate, onDelete }) {
                     <h3>{title}</h3>
                     <button
                       className="text-button"
+                      disabled={busy}
                       onClick={() =>
-                        download(`${job.company}-${name}.txt`, body)
+                        void run(async () => {
+                          const { createDocxBlob } =
+                            await import("./docx-output.js");
+                          const file = await createDocxBlob(title, body);
+                          downloadBlob(
+                            `${safeFileName(job.company)}-${name}.docx`,
+                            file,
+                          );
+                        })
                       }
                     >
                       <Download size={15} />
-                      Download
+                      Download DOCX
                     </button>
                   </div>
                   <pre>{body}</pre>

@@ -13,14 +13,16 @@ export default defineConfig({
   },
   webServer: [
     {
-      command: `DATA_DIR=.local/e2e-${Date.now()} npm run dev`,
+      command: `node --input-type=module -e "process.env.DATA_DIR='.local/e2e-${Date.now()}'; await import('./server/dev.mjs')"`,
+      env: { DEMO_AI: "true", TABLE_NAME: "" },
       port: 3001,
-      reuseExistingServer: !process.env.CI,
+      reuseExistingServer: false,
     },
     {
-      command: "npm run dev:web",
+      command:
+        "node node_modules/vite/bin/vite.js preview --host 127.0.0.1 --port 5173 --strictPort",
       port: 5173,
-      reuseExistingServer: !process.env.CI,
+      reuseExistingServer: false,
     },
   ],
 });

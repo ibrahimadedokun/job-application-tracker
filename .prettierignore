@@ -1,0 +1,7 @@
+node_modules/
+dist/
+cdk.out/
+.local/
+test-results/
+playwright-report/
+package-lock.json

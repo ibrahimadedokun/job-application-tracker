@@ -1,0 +1,13 @@
+{
+  "name": "folio-azure-api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "index.mjs",
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@azure/functions": "4.17.1"
+  }
+}

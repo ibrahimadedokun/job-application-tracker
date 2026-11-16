@@ -12,6 +12,7 @@ const client = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 export function createStore({
   table = process.env.TABLE_NAME,
   directory = process.env.DATA_DIR || ".local/data",
+  database = client,
 } = {}) {
   const key = (user, id) => ({ pk: `USER#${user}`, sk: `JOB#${id}` });
   const file = (user, id) =>
@@ -27,15 +28,16 @@ export function createStore({
         let items = [],
           cursor;
         do {
-          const r = await client.send(
+          const r = await database.send(
             new QueryCommand({
               TableName: table,
               KeyConditionExpression: "pk = :pk",
               ExpressionAttributeValues: { ":pk": `USER#${user}` },
               ExclusiveStartKey: cursor,
+              ConsistentRead: true,
             }),
           );
-          items.push(...r.Items.map(strip));
+          items.push(...(r.Items || []).map(strip));
           cursor = r.LastEvaluatedKey;
         } while (cursor);
         return items;
@@ -63,7 +65,7 @@ export function createStore({
       if (table)
         return strip(
           (
-            await client.send(
+            await database.send(
               new GetCommand({
                 TableName: table,
                 Key: key(user, id),
@@ -80,8 +82,15 @@ export function createStore({
       }
     },
     async put(user, job, expected) {
+      if (Buffer.byteLength(JSON.stringify(job)) > 350000)
+        throw Object.assign(
+          new Error(
+            "Application storage limit reached. Export your records before deleting old data.",
+          ),
+          { status: 400 },
+        );
       if (table) {
-        await client.send(
+        await database.send(
           new PutCommand({
             TableName: table,
             Item: { ...key(user, job.id), ...job },
@@ -105,7 +114,7 @@ export function createStore({
     },
     async remove(user, id) {
       if (table)
-        await client.send(
+        await database.send(
           new DeleteCommand({ TableName: table, Key: key(user, id) }),
         );
       else {

@@ -15,7 +15,11 @@ jobs:
           node-version: "22"
           cache: npm
       - run: npm ci
+      - run: npm run format:check
+      - run: npm audit --omit=dev --audit-level=high
       - run: npm run check
+      - run: az bicep install
+      - run: npm run azure:check
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
         env:
