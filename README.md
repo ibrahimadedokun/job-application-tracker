@@ -1,101 +1,79 @@
-# Folio — your next chapter, organised
+# Folio — job application tracker
 
-A private job application workspace with a responsive UI, status timelines, CV and cover letter tailoring, and a version history for each opportunity. Built with React and Node.js, with serverless AWS, Azure and combined Azure/AWS deployment options.
+A private workspace for tracking job applications, tailoring CVs and cover letters, and reviewing document versions. React provides the browser UI; Node.js provides the API and cloud adapters.
 
 ![Folio dashboard](docs/dashboard.png)
 
-## What you can do
+## Features
 
-- Create and search applications; record the job description, link, location and private notes.
-- Move between **Saved → Applied → Interview → Offer**, or mark Rejected / Withdrawn. Every status change appears in the timeline.
-- Paste your CV and an optional cover letter, or upload `.txt`, `.md`, `.pdf` or `.docx` files. PDF/DOCX text is extracted in your browser; scanned PDFs require OCR and are not supported. Tailored documents can be downloaded as cleanly formatted DOCX files.
-- Tailor both documents to the selected job using AWS Bedrock or a Microsoft Foundry agent on Azure. The prompt requests natural, specific language, retains factual claims, and flags missing skills instead of inventing them. AI can still make mistakes: review the output before submitting.
-- Keep original extracted text alongside every generated version. Download tailored documents as DOCX files. Up to eight versions per job, subject to the 350 KB record limit.
-- Export all your data as JSON, or permanently delete an application and its documents from the active database.
+- Track applications through Saved, Applied, Interview, Offer, Rejected and Withdrawn, with a status history.
+- Search applications and keep job descriptions, links and private notes.
+- Paste documents or extract text from TXT, Markdown, PDF and DOCX files in the browser.
+- Generate CV and cover-letter drafts with explicit consent; retain originals and up to eight versions per application, within the storage limit.
+- Download generated DOCX files, export records as JSON and delete applications from active storage.
 
-## Local development — no AWS account required
+AI drafts require human review. Uploaded formatting is not retained; scanned PDFs need OCR, which is not implemented. Deletion from active storage does not immediately erase retained recovery copies.
 
-Use Node.js **22 or 24** and npm. Start from the existing checkout; cloud tasks are already isolated, so a Git worktree is unnecessary unless explicitly requested.
+## Run locally
+
+Install Node.js 22+ and npm. Run these in separate terminals:
 
 ```sh
 npm ci
-npm run dev        # terminal 1: local API, port 3001
-npm run dev:web    # terminal 2: Vite, port 5173
+npm run dev
 ```
-
-Open the local Vite address reported by the command. The UI identifies the local demo and offers **Explore with example applications**. Demo tailoring uses a deterministic template, **not an AI model**; no external AI request is made and no credentials are needed. Use fictional data in this mode. Local files under `.local/data` persist across restarts and are ignored by Git. The development API uses a fixed identity and binds to loopback; do not expose it or the Vite proxy to the public Internet.
-
-To test real AI locally, configure AWS credentials through your normal SDK profile/identity, then start the API with:
 
 ```sh
-DEMO_AI=false AWS_REGION=eu-west-2 \
-BEDROCK_MODEL_ID=YOUR_ENABLED_MODEL_ID npm run dev
+npm run dev:web
 ```
 
-The shell's AWS profile is used automatically. `.env.example` documents the available parameters; files named `.env` are **not** automatically loaded. Never commit credentials or real CVs.
+Open the Vite URL. Local mode uses a fixed development identity, files in `.local/data`, and deterministic demo generation. Use fictional data and keep the servers on loopback. No cloud credentials are required for the demo.
 
-## AWS system architecture
+For live local Bedrock generation, set `DEMO_AI=false`, `AWS_REGION` and `BEDROCK_MODEL_ID`, and use the AWS SDK credential chain. Model access and inference charges apply. See [.env.example](.env.example); environment files are not loaded automatically.
 
-```mermaid
-flowchart LR
-    Browser[React browser app] -->|HTTPS static assets| CDN[CloudFront + security headers]
-    CDN -->|Origin Access Control| S3[Private S3 bucket]
-    Browser -->|Hosted sign-in / PKCE| Auth[Cognito User Pool]
-    Auth -->|JWT access token| Browser
-    Browser -->|Bearer token / HTTPS| Gateway[API Gateway HTTP API\nJWT authorizer + throttling]
-    Gateway --> Lambda[Node.js Lambda\nvalidation + owner scoping]
-    Lambda -->|User-scoped records| DB[(DynamoDB\nKMS encryption + PITR)]
-    Lambda -->|Explicit document consent| AI[AWS Bedrock Converse\nconfigurable model]
-    Lambda --> Logs[CloudWatch\n7-day operational logs]
-```
+## Deployment options
 
-[Detailed architecture, data lifecycle and security boundaries](docs/architecture.md).
+All targets use Terraform and the same deployment runner. Each target has separate state, identities and records; selecting another target does not migrate data.
 
-## Deployment with Terraform
+| Target  | Hosting and records                                              | Identity | AI                   | Guide                                |
+| ------- | ---------------------------------------------------------------- | -------- | -------------------- | ------------------------------------ |
+| `combo` | Azure Free Static Web Apps, Flex Functions, private Blob Storage | Entra    | AWS Bedrock          | [Azure + AWS](infra/combo/README.md) |
+| `aws`   | CloudFront/S3, Lambda, DynamoDB                                  | Cognito  | AWS Bedrock          | [AWS](infra/aws/README.md)           |
+| `azure` | Azure Free Static Web Apps, Flex Functions, private Blob Storage | Entra    | Foundry prompt agent | [Azure](infra/azure/README.md)       |
 
-All three targets use the same configuration format and deployment commands. Copy the AWS, Azure or combo example to `deployment.json`, edit its values, and select the target with `cloud: "aws"`, `cloud: "azure"` or `cloud: "combo"`. Each cloud/environment gets separate Terraform state. Switching targets deploys an independent installation; it does not migrate records or accounts.
+The current live installation uses `combo`, with Azure resources in **East US 2** and Bedrock requests originating in **eu-west-2**. GPT-6 Sol inference is currently blocked by AWS account eligibility, despite an active model agreement. The infrastructure and public site checks passed; this does not establish working AI generation. See the dated [validation record](docs/validation.md).
 
-```powershell
-npm ci
-Copy-Item infra/environments/aws.dev.example.json deployment.json
-# Or use infra/environments/azure.dev.example.json
-# Or use infra/environments/combo.dev.example.json
-# Edit the selected account/subscription, tenant, region and model settings.
-npm run check
-npm run infra:plan
-npm run deploy
-```
+Start with the [deployment guide](infra/README.md). Do not overwrite an existing `deployment.json` or apply a new installation over existing resources.
 
-Install Terraform >=1.11,<2 and Node.js 22+. Authenticate outside the configuration using your AWS SSO/profile or Azure CLI. Azure publishing also needs PowerShell 7 and Azure CLI 2.80+. Terraform manages Entra registration and callbacks automatically. `npm run deploy` runs tests/build, prompts through Terraform apply, then publishes code/assets. Cloud services can incur charges; budget alerts are optional and are not spending caps.
+## Documentation
 
-See the [shared deployment guide](infra/README.md) for configuration, state backends, environment switching and migration from existing installations. Provider details and live verification: [AWS](infra/aws/README.md), [Azure](infra/azure/README.md), [Azure + AWS](infra/combo/README.md). Combo uses Azure Free Static Web Apps, Functions, Entra and Blob Storage with AWS Bedrock through managed-identity federation. Azure uses Free Static Web Apps, a scale-to-zero Functions API, private LRS blobs and a Foundry prompt agent with GPT-4.1 nano by default; AWS uses CloudFront/S3, Lambda, Cognito, DynamoDB and Bedrock.
+- [Current system design](docs/architecture.md): components, trust boundaries, data lifecycle, decisions, trade-offs and limitations.
+- [Future system design](docs/future-system-design.md): proposed security, latency, reliability and efficiency improvements, capacity assumptions, cost envelope and migration plan.
+- [Deployment and state management](infra/README.md): prerequisites, commands, configuration, recovery and teardown.
+- [Validation and operational readiness](docs/validation.md): observed results and outstanding checks.
 
-## Validation
+## Development checks
 
 ```sh
-npm test                  # backend behavior + security regression tests
+npm test                  # application, adapters and deployment configuration
 npm run build             # production frontend
-npm run infra:check       # all three Terraform targets + mocked security tests + runtime packaging
-npm run check             # tests, build and Terraform/package checks
+npm run infra:check       # all Terraform targets with mock providers; package checks
+npm run check             # tests, frontend build and infrastructure/package checks
 npx playwright install chromium
-npm run test:e2e          # builds and tests production UI with deployed CSP
-npm run format:check      # repository formatting
+npm run test:e2e          # isolated browser workflow and authentication simulations
+npm run format:check
 ```
 
-If Chromium is preinstalled, run `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium npm run test:e2e`. Cloud environments may need `npm ci --cache /workspace/.npm-cache` and `PLAYWRIGHT_BROWSERS_PATH=/workspace/.cache/ms-playwright` for writable caches. The suite always starts isolated servers, uses demo AI and local storage, and refuses to reuse existing servers on ports 3001/5173. Stop your development servers first. Test data is fictional and stored under a run-specific `.local/e2e-*` directory. The test deletes its application when successful.
+Browser tests use fictional data and demo AI. Stop development servers on ports 3001 and 5173 before running them. CI also runs the production dependency audit; local mock tests do not deploy resources or prove account-specific cloud access.
 
 ## Repository map
 
-- `src/`: responsive UI, hosted login, workspace, tailoring and version review.
-- `server/`: validated API, Lambda adapter, DynamoDB / local persistence, demo generator.
-- `infra/aws/`: AWS Terraform, publishing and security policy.
-- `infra/azure/`: Azure Terraform, Functions adapters, Foundry agent and publishing.
-- `infra/combo/`: Azure hosting/storage with federated AWS Bedrock inference.
-- `tests/`: backend and browser tests.
-- `docs/`: architecture, security, deployment validation evidence.
+| Directory | Purpose                                                                         |
+| --------- | ------------------------------------------------------------------------------- |
+| `src/`    | UI, browser authentication, document extraction and DOCX output                 |
+| `server/` | Shared validation, application routes, Bedrock generator and AWS/local adapters |
+| `infra/`  | Deployment runner, configuration, three Terraform targets and publishing        |
+| `tests/`  | Application, security, document and browser tests                               |
+| `docs/`   | Current/future system designs and validation evidence                           |
 
-## Current limitations
-
-PDF/DOCX uploads are text-extracted in the browser; original formatting is not preserved, and scanned PDFs need OCR, which is not included. DOCX downloads use a clean template. There is no email ingestion, automatic job scraping or automatic employer submission. AI drafts need human review. Production authentication, real model output and deployed service access require live validation on the selected cloud. This is an initial implementation, not a security certification or a statement of regulatory compliance.
-
-[Recorded validation results and remaining cloud checks](docs/validation.md).
+Email ingestion, job scraping, employer submission, account-wide self-service erasure and production abuse quotas are not implemented.

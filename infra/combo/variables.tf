@@ -8,7 +8,17 @@ variable "environment" {
 }
 variable "region" {
   type    = string
-  default = "westeurope"
+  default = "eastus2"
+}
+variable "resource_group_region" {
+  type        = string
+  default     = null
+  description = "Metadata location of the resource group; preserve it when moving an incomplete deployment's workload region."
+}
+variable "static_web_region" {
+  type        = string
+  default     = "eastus2"
+  description = "Static Web Apps control-plane region, selected independently of the Functions/storage region."
 }
 variable "subscription_id" { type = string }
 variable "tenant_id" { type = string }
@@ -48,7 +58,7 @@ variable "extra_model_arns" {
   type    = list(string)
   default = []
   validation {
-    condition     = alltrue([for arn in var.extra_model_arns : can(regex("^arn:aws[^:]*:bedrock:[a-z0-9-]+:[0-9]*:foundation-model/[^*]+$", arn))])
+    condition     = alltrue([for arn in var.extra_model_arns : can(regex("^arn:aws[^:]*:bedrock:[a-z0-9-]+:[0-9]*:foundation-model/[A-Za-z0-9._:-]+$", arn)) || can(regex("^arn:aws:bedrock:::foundation-model/[A-Za-z0-9._:-]+$", arn))])
     error_message = "Extra model resources must be explicit foundation-model ARNs."
   }
 }

@@ -21,7 +21,7 @@ console.log(
 const token = process.env.AZURE_SMOKE_ACCESS_TOKEN;
 if (!token) {
   console.log(
-    "Set AZURE_SMOKE_ACCESS_TOKEN to an API access token from your signed-in browser session for CRUD checks. Add --tailor for one billable Foundry call.",
+    "Set AZURE_SMOKE_ACCESS_TOKEN to an API access token from your signed-in browser session for CRUD checks. Add --tailor for one billable AI call.",
   );
   process.exit(0);
 }
@@ -79,7 +79,7 @@ try {
       201,
     );
     assert.equal(tailored.versions.length, 1);
-    console.log("Live Foundry agent tailoring passed.");
+    console.log("Live AI tailoring passed.");
   }
   console.log("Authenticated create, list, update and export checks passed.");
 } finally {

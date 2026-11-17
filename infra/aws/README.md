@@ -1,15 +1,35 @@
-# AWS Terraform target
+# AWS deployment
 
-Use the [shared Terraform workflow](../README.md) and `infra/environments/aws.dev.example.json`. Configure an AWS profile/SSO session; `allowed_account_ids` prevents using credentials for an account other than `aws.account_id`. The deployment identity needs the permissions to manage the listed services, IAM roles/pass-role, static uploads and CloudFront invalidation. Terraform needs no CDK bootstrap stack.
+Use [shared deployment operations](../README.md) with [aws.dev.example.json](../environments/aws.dev.example.json). This is an alternative installation; the current live validation record is for combo, not AWS-only.
 
-The target creates private S3 static hosting behind CloudFront Origin Access Control; a Cognito public browser client using authorization code + PKCE; an access-token-authorized HTTP API; a 512 MB Node.js 22 Lambda with five reserved concurrent executions and a 30-second deadline; and on-demand DynamoDB with encryption and point-in-time recovery. Access/operational logs retain seven days. JWT routes require `openid`, CORS is limited to the frontend origin, and Bedrock invocation permissions name only the configured model resources. DynamoDB and Cognito have deletion protection and Terraform `prevent_destroy`.
+## Resources and behavior
 
-Set `aws.model_id` to a Bedrock Converse model enabled in the hosting region. Full inference-profile ARNs require `aws.extra_model_arns` listing each destination foundation-model ARN. Cross-region profiles affect data residency; prefer a regional model when required. The sample model is a syntax/configuration example; verify current model availability, lifecycle, price and account quota before applying. Model IDs with version colons are accepted. Wildcard model permissions are rejected.
+| Component  | Configuration                                                                     |
+| ---------- | --------------------------------------------------------------------------------- |
+| Frontend   | Private S3 bucket, CloudFront Origin Access Control and security headers          |
+| Login      | Cognito public client, authorization code with PKCE                               |
+| API        | HTTP API JWT authorizer, required `openid` scope and frontend-only CORS           |
+| Compute    | Node.js 22 Lambda, 512 MB, 30-second timeout, five reserved concurrent executions |
+| Records    | On-demand DynamoDB, encryption, conditional writes and point-in-time recovery     |
+| AI         | Bedrock Converse, one SDK attempt, 24-second request deadline                     |
+| Operations | Seven-day API/Lambda logs; gateway rate limit 5 requests/second with burst 10     |
 
-There is no always-on compute, NAT gateway, load balancer or container cluster. Lambda/HTTP API/DynamoDB charge primarily by usage. S3 storage/requests, CloudFront transfer, DynamoDB recovery/storage, Cognito, logs and Bedrock inference can incur charges; account allowances do not guarantee free operation. Optional monthly budget notifications are in USD and do not cap spending.
+The role permits table operations, operational logging and invocation of configured Bedrock model resources. DynamoDB/Cognito have service deletion protection and Terraform `prevent_destroy`. See the [current design](../../docs/architecture.md) for shared validation, consent, ownership and data limits.
 
-After apply, the common runner uploads assets plus `/config.json` and requests a CloudFront invalidation. It preserves old hashed assets so open browser sessions continue working; clean obsolete assets deliberately if needed. Terraform owns infrastructure and the Lambda ZIP; the publisher owns static object contents. Failed publishing can be retried with `npm run deploy:publish` using the same configuration.
+## Configure
 
-For live verification, open `web_url` from `npm run infra:output`, sign up/verify email, create/update/export a fictional record and confirm persistence. Sign in as a different user to check isolation. Tailor fictional documents with explicit consent and confirm a saved version. Test sign-out and expired sessions, and confirm unauthenticated API requests fail. CloudFront propagation, Cognito delivery/redirects, IAM permissions, model latency/quota and budgets require live verification. Local mocked Terraform tests cannot prove these account-specific behaviors.
+Top-level `region` is the AWS hosting/model source region. Set `aws.account_id` and an enabled Converse model in `aws.model_id`. Full inference-profile ARNs require exact foundation-model resources in `aws.extra_model_arns`; global profiles may return region-agnostic ARNs. Profiles affect processing residency. Account activation, authorization, quotas and actual model availability must all be verified.
 
-Before teardown, export records. Deletion protection and `prevent_destroy` intentionally block destructive changes to data and identities. Remove these only after reviewing an explicit teardown plan. S3 must be emptied deliberately before deleting the bucket. Retained resources and recovery/storage can keep incurring charges. For an older CloudFormation installation, follow the import/adoption notes in the shared guide before applying Terraform.
+The default example is a configuration example, not a model-access guarantee. The combo target has additional GPT-specific project permissions and profile validation; do not assume that its live results establish compatibility for every model on AWS-only.
+
+The deployment caller needs the relevant service, IAM/pass-role, static upload and invalidation permissions. Use an AWS profile/SSO session and the expected account. Follow the shared plan/apply commands; no separate infrastructure bootstrap is required.
+
+## Publish and verify
+
+Terraform owns infrastructure and the Lambda package. The publisher uploads assets and `/config.json`, then invalidates CloudFront. It retains older hashed assets so open sessions can continue loading them. Retry failed publication with `deploy:publish`; remove obsolete assets deliberately.
+
+Verify signup/email delivery, PKCE callbacks, authenticated CRUD/export, a second user's isolation, expired sessions and a consented fictional model request. Check recovery and budget delivery separately. Mock provider tests cannot validate those account-specific behaviors.
+
+## Cost and retention
+
+There is no always-on application compute, NAT gateway or container cluster. Storage, CDN transfer, API requests, DynamoDB recovery, logs, identity and inference can still cost money; optional USD budget alerts do not cap spending. Active record deletion can leave recovery copies within the configured service retention window. Export data before reviewed teardown; the static bucket must be emptied deliberately before removal.

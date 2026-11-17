@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import { readConfiguration, terraformVariables } from "./config.mjs";
 import { buildAws } from "./build.mjs";
+import { regionValidationTemplate } from "./combo/regions.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 process.chdir(root);
@@ -166,7 +167,29 @@ if (action === "init") {
   process.exit(0);
 }
 if (["plan", "apply"].includes(action)) {
-  if (action === "apply" && config.cloud !== "aws")
+  if (config.cloud === "combo") {
+    const validationTemplate = join(artifacts, "region-validation.json");
+    await json(validationTemplate, regionValidationTemplate(config));
+    run("pwsh", [
+      "-NoProfile",
+      "-File",
+      "infra/combo/preflight.ps1",
+      "-SubscriptionId",
+      config.azure.subscription_id,
+      "-TenantId",
+      config.azure.tenant_id,
+      "-Region",
+      config.region,
+      "-StaticWebRegion",
+      config.azure.static_web_region || "eastus2",
+      "-ResourceGroup",
+      `${config.name}-${config.environment}-combo`,
+      "-ValidationTemplate",
+      validationTemplate,
+      ...(action === "plan" ? ["-ValidateOnly"] : []),
+    ]);
+  }
+  if (action === "apply" && config.cloud === "azure")
     run("pwsh", [
       "-NoProfile",
       "-File",

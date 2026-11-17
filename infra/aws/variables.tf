@@ -28,7 +28,7 @@ variable "extra_model_arns" {
   type    = list(string)
   default = []
   validation {
-    condition     = alltrue([for arn in var.extra_model_arns : can(regex("^arn:aws[^:]*:bedrock:[a-z0-9-]+:[0-9]*:foundation-model/[^*]+$", arn))])
+    condition     = alltrue([for arn in var.extra_model_arns : can(regex("^arn:aws[^:]*:bedrock:[a-z0-9-]+:[0-9]*:foundation-model/[A-Za-z0-9._:-]+$", arn)) || can(regex("^arn:aws:bedrock:::foundation-model/[A-Za-z0-9._:-]+$", arn))])
     error_message = "Extra model resources must be explicit foundation-model ARNs."
   }
 }

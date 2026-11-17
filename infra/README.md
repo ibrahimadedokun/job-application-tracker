@@ -1,90 +1,111 @@
-# Terraform deployment
+# Deployment and operations
 
-AWS, Azure and the Azure/AWS combination use the same commands and JSON configuration format. `cloud` selects the Terraform root under `infra/aws`, `infra/azure` or `infra/combo`; `environment` selects an isolated installation. Cloud-specific runtime adapters stay behind the shared application API. The two providers have different identity, storage and AI services, so their resource definitions remain separate. Switching cloud deploys a separate installation; it does not move user accounts or records.
+The deployment runner selects a Terraform root using `cloud: "combo"`, `"aws"` or `"azure"`. The [current design](../docs/architecture.md) explains the architecture; provider guides cover [combo](combo/README.md), [AWS](aws/README.md) and [Azure](azure/README.md). Check [validation status](../docs/validation.md) before treating any target as production-ready.
 
-## Setup and commands
+## Prerequisites
 
-Install Node.js 22+, npm and **Terraform >=1.11, <2.0**. CI uses 1.17.2. Set `TERRAFORM_BIN` if the desired executable is not on PATH. An existing Terraform 1.5 installation must be upgraded. Run commands from the repository root.
+| Requirement                                                                     | Applies to                                                                        |
+| ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| Node.js 22+, npm, Terraform >=1.11 and <2                                       | All targets; CI pins Terraform 1.17.2                                             |
+| AWS SDK credentials, typically an SSO/profile session                           | `aws` and `combo`                                                                 |
+| PowerShell 7, Azure CLI >=2.80, Azure/Entra authentication                      | `azure` and `combo`                                                               |
+| Resource creation, role assignment and provider-registration permissions        | Azure deployment identity                                                         |
+| Entra app-management permissions; app-role assignment permission for federation | Azure/combo directory identity; subscription ownership alone is insufficient      |
+| IAM and applicable service administration permissions                           | AWS deployment identity                                                           |
+| Enabled model, eligible account, valid agreement and sufficient quota           | Each model provider; infrastructure provisioning does not grant model eligibility |
+
+Use `TERRAFORM_BIN` if the intended Terraform executable is not on PATH. Credentials belong in the cloud credential chain, not JSON configuration, source files or frontend assets. For unattended deployments, use workload identity and an auditable deployment role.
+
+## Configure and deploy
+
+For a new installation only:
 
 ```powershell
 npm ci
-Copy-Item infra/environments/aws.dev.example.json deployment.json
-# Or: Copy-Item infra/environments/azure.dev.example.json deployment.json
-# Or: Copy-Item infra/environments/combo.dev.example.json deployment.json
+Copy-Item infra/environments/combo.dev.example.json deployment.json
+# Alternatives: aws.dev.example.json or azure.dev.example.json
+# Edit installation identity, account/subscription, tenant, regions and model.
+az login --tenant YOUR-TENANT-ID
+$env:AWS_PROFILE = 'YOUR-AWS-PROFILE'
+aws sso login --profile $env:AWS_PROFILE
+npm run check
+npm run infra:plan -- --config deployment.json
+npm run deploy -- --config deployment.json
 ```
 
-Edit `deployment.json` with your cloud, region, environment and account/subscription/model values. The file is ignored by Git. Configure cloud credentials outside it: AWS SSO/profile/SDK chain for AWS; `az login --tenant YOUR_TENANT_ID` for Azure. Azure publishing also requires **PowerShell 7** and Azure CLI **2.80+**, plus permission to register resource providers. Terraform creates the Entra app registration and service principal, so no separate identity-setup command is needed.
+Only authenticate to the clouds used by the selected target. Keep existing configuration and state when updating an installation. `deployment.json` is ignored by Git.
 
-```powershell
-npm run check                         # application + all three Terraform targets, no cloud deployment
-npm run infra:plan                    # review selected cloud/environment
-npm run infra:init                    # initialize selected backend/root without planning resources
-npm run deploy                        # tests, UI build, interactive terraform apply, publish
-npm run infra:output                  # selected deployment's public endpoints/identifiers
-```
+| Command                                              | Behavior                                                                                                  |
+| ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `npm run check`                                      | Application tests, frontend build, mocked Terraform and package verification; no cloud deployment         |
+| `npm run infra:init -- --config deployment.json`     | Initialize selected root/backend and validate it                                                          |
+| `npm run infra:plan -- --config deployment.json`     | Live infrastructure plan; combo also checks service regions and validates resources when its group exists |
+| `npm run deploy -- --config deployment.json`         | Tests/build, interactive Terraform apply, then publish code/assets                                        |
+| `npm run deploy:publish -- --config deployment.json` | Build and retry publication against existing infrastructure; no apply                                     |
+| `npm run infra:output -- --config deployment.json`   | Public endpoints and deployment identifiers from state                                                    |
 
-To select another configuration without editing commands:
+Configuration selection order is explicit `--config`, then `DEPLOYMENT_CONFIG`, then `deployment.json`. The runner does not automatically approve applies. Model inference is not part of apply or publication. Azure-only publication creates a Foundry agent version; combo publication does not.
 
-```powershell
-$env:DEPLOYMENT_CONFIG = 'infra/environments/azure.dev.json'
-npm run infra:plan
-npm run deploy
-```
+## Configuration reference
 
-Or pass an explicit configuration path:
+| Key                                            | Purpose                                                                                                           |
+| ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `cloud`, `name`, `environment`                 | Target and stable installation identity; each combination has separate state                                      |
+| `region`                                       | Hosting region; combo defaults to Azure `eastus2`                                                                 |
+| `aws.account_id`                               | Expected 12-digit account; provider rejects other accounts                                                        |
+| `aws.region`                                   | Combo Bedrock/STS source region; AWS-only uses top-level `region`                                                 |
+| `aws.model_id`, `aws.extra_model_arns`         | Explicit model ID or full inference-profile ARN and its exact model resources; no wildcards                       |
+| `aws.existing_oidc_provider_arn`               | Combo only: reuse a provider managed elsewhere; normally empty on a first installation                            |
+| `aws.cognito_domain_prefix`                    | Optional AWS-only hosted-login domain prefix                                                                      |
+| `azure.subscription_id`, `azure.tenant_id`     | Azure resource and directory targets                                                                              |
+| `azure.static_web_region`                      | Combo static-app resource region; default `eastus2`                                                               |
+| `azure.resource_group_region`                  | Combo only: preserve a retained group's metadata location during deliberate recovery; omit for a new installation |
+| `azure.extra_origins`                          | Additional HTTPS origins for CORS and SPA callbacks; custom domain/DNS binding remains separate                   |
+| `azure.budget_start_date`                      | First day of the initial deployment month; keep stable on updates                                                 |
+| Azure Foundry model/region/SKU/capacity fields | Azure-only; ignored by combo                                                                                      |
+| `budget.amount`, `budget.email`                | Optional monthly alerts; empty email disables them. Azure billing currency and AWS USD; alerts are not caps       |
+| `backend`                                      | Local, S3 or AzureRM state backend; independent of hosting cloud                                                  |
 
-```powershell
-npm run infra:plan -- --config infra/environments/aws.prod.json
-npm run deploy -- --config infra/environments/aws.prod.json
-```
+For inference profiles, keep `aws.account_id` and the source region consistent with the profile ARN. Regional and exact region-agnostic foundation-model ARNs can both be valid. Use the provider's returned values rather than inventing destinations. The combo guide covers GPT-specific validation and account access.
 
-Use the same commands for both providers. Terraform prompts for approval during apply. Publishing follows only a successful apply; no auto-approval flag is added. Terraform manages the infrastructure, authentication registration/callbacks and Lambda code. Publishing uses the native static-asset/Functions deployment APIs; it is not an infrastructure provisioner or a second IaC engine. Azure also provisions a versioned Foundry prompt agent and pins its version in the Function package. Model calls are still gated by user consent in the app.
+## State and recovery
 
-If infrastructure apply succeeded but an upload or agent provisioning failed, resolve the error and retry publishing without another apply:
-
-```powershell
-npm run deploy:publish -- --config deployment.json
-```
-
-The selected target must already have Terraform state and outputs. `infra:plan` alone does not create infrastructure. `infra:check` runs `terraform fmt`, initializes providers without a backend, validates all three roots, runs native Terraform tests with **mock providers**, and builds/verifies the Azure runtime package. No real resources are created by these checks. Live plan/apply requires credentials, tenant consent, regional service availability and model quota. Provider versions and checksums are committed in each root's `.terraform.lock.hcl`.
-
-## Configuration
-
-| Value                           | Meaning                                                                                                                        |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `cloud`                         | `aws`, `azure` or `combo` (Azure hosting + Bedrock).                                                                           |
-| `name`, `environment`           | Stable installation identity, for example `folio` / `dev`.                                                                     |
-| `region`                        | Hosting region (`eu-west-2` on AWS; `westeurope` on Azure, for example).                                                       |
-| `budget.amount`, `budget.email` | Optional monthly alert; empty email disables it. AWS uses USD; Azure uses the billing currency. Alerts are not a spending cap. |
-| `aws`                           | Expected AWS account ID, Bedrock model ID/full profile ARN and explicit extra model ARNs.                                      |
-| `azure`                         | Subscription/tenant IDs, Foundry region, model/version/SKU/capacity and optional additional frontend origins.                  |
-| `backend`                       | Optional Terraform state backend configuration (defaults to isolated local state).                                             |
-
-Both cloud sections may coexist in a configuration. The `combo` target requires both: top-level `region` selects Azure hosting and `aws.region` selects Bedrock. It uses Azure identity/storage and AWS model settings; Foundry settings are ignored. See [combo details](combo/README.md). Changing `cloud` plus the required region/account/model values selects the other implementation. Separate example files provide appropriate defaults. Credentials, API keys and document data do not belong in configuration files. Azure `budget_start_date` is the first day of the initial deployment month; keep it stable when updating a budget.
-
-## State, environments and team use
-
-Generated Terraform roots, artifacts, non-secret deployment outputs and default state are isolated under:
+The runner creates:
 
 ```text
 .local/terraform/<name>/<environment>/<cloud>/
-  root/                  # copied Terraform files and provider/backend metadata
-  artifacts/             # packaged API, runtime config and generated assets
-  terraform.tfstate      # default local backend
-  target.json            # account/region/backend guard
-  outputs.json
+  root/                   # generated Terraform copy and backend metadata
+  artifacts/              # deployable code and public runtime config
+  terraform.tfstate       # default local state
+  target.json             # account, tenant, region and backend guard
+  outputs.json            # public deployment outputs
 ```
 
-Never commit `.local`, state, plan files, backend metadata or credentials. Back up local state: losing it does not remove deployed resources and can lead to duplicate resources on a later apply. Do not run two deployments to the same target concurrently. Changing cloud or environment gets separate state. Changing account/subscription, tenant, region or backend on an existing target is rejected by the runner, because that could reuse state against a different installation. Use a new environment or explicitly migrate state. This guard does not replace proper remote-state locking.
+Edit source under `infra/<cloud>`; generated roots are overwritten. Never commit `.local`, state, plans, tokens or private document exports. Treat state and backups as sensitive. Back up local state securely, and never run concurrent operations against the same target.
 
-For team/production use, provision an encrypted remote-state bucket/container separately and configure a backend. The backend is independent of the target cloud. Use a **unique key per name/environment/cloud**. Store backend credentials in the standard credential chain, not in configuration. Examples:
+The guard rejects account, tenant, hosting region or backend changes; combo also guards the AWS account and source region. A new environment creates a separate installation, not a migration. Do not delete state or the guard to bypass an error.
+
+| Situation                                        | Recovery                                                                                                           |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------ |
+| Apply partially failed                           | Retain state, fix the cause and review a fresh plan; do not start another empty state over live resources          |
+| Infrastructure exists but publishing failed      | Retry `deploy:publish` with the same configuration                                                                 |
+| Resource exists outside this state               | Confirm exclusive ownership, then import/adopt it deliberately; do not destroy records to resolve bookkeeping      |
+| Region/account/backend must change               | Back up state/configuration; review resource replacements and identity/data migration before changing the guard    |
+| Empty deployment intentionally destroyed         | Confirm no managed resources remain, then update the guarded target deliberately and rebuild with protected source |
+| Provider returns stale/missing child information | Reconcile cloud existence with state before modifying either; retain backups and review the resulting plan         |
+
+## Remote state
+
+Use encrypted, access-controlled remote state with locking for team or production work. Provision the backend separately and choose a unique key per installation. Configure it before the first apply when possible.
+
+Example top-level `backend` object:
 
 ```json
 {
   "type": "s3",
   "config": {
     "bucket": "YOUR-EXISTING-STATE-BUCKET",
-    "key": "folio/prod/aws/terraform.tfstate",
+    "key": "folio/prod/combo/terraform.tfstate",
     "region": "eu-west-2",
     "encrypt": true,
     "use_lockfile": true
@@ -92,27 +113,18 @@ For team/production use, provision an encrypted remote-state bucket/container se
 }
 ```
 
-```json
-{
-  "type": "azurerm",
-  "config": {
-    "resource_group_name": "YOUR-STATE-GROUP",
-    "storage_account_name": "YOURSTATEACCOUNT",
-    "container_name": "tfstate",
-    "key": "folio/prod/azure/terraform.tfstate",
-    "use_azuread_auth": true
-  }
-}
-```
+An AzureRM backend instead uses `resource_group_name`, `storage_account_name`, `container_name`, `key` and `use_azuread_auth: true`. Authenticate through the backend's credential chain; do not put access keys in configuration.
 
-Place one of these objects at the top-level `backend` key. Configure a remote backend **before the first plan/apply** for that installation. To migrate existing local state, back it up, edit the generated root's `backend.tf.json`, run `terraform init -migrate-state` from that root, and verify `terraform state list` before updating the matching `target.json`/configuration to the new backend. Do not delete state or the target guard to bypass migration.
+For an existing backend migration, back up state, configure the generated root's backend, run `terraform init -migrate-state` there, verify state/resource ownership, then align configuration and target metadata. Do not use ordinary deployment commands as an implicit migration tool.
 
-## Existing CDK/Bicep installations
+## Verify and operate
 
-This replaces the deployment tools; it does not automatically adopt or destroy existing resources. No cloud resources were created in the preparation sessions. If you deployed an earlier version yourself, **do not apply a fresh Terraform installation over it** without an adoption plan. Current names may differ from the old generated names.
+Open `web_url` from the outputs. Public health checks establish only frontend/configuration delivery and anonymous API rejection. Before using real documents, verify signed-in CRUD, export, sign-out, session expiry, two-user isolation and a consented fictional AI request. Record model access, latency and quota separately from infrastructure health.
 
-Inventory and export data first. Keep the old infrastructure state/template. Adapt Terraform names/settings to the live resources, then use Terraform import blocks or `terraform import` with the actual IDs. Detach AWS resources from CloudFormation using retain semantics before giving Terraform ownership; never manage the same resource actively with both systems. Azure ARM/Bicep does not have a separate Terraform state to migrate: import each resource and the Entra registration. Review plans until no unintended replacements or deletions remain. Treat Cognito pools, Entra registrations and data stores as persistent identities/data, not disposable resources. A new Terraform deployment has a separate empty datastore and users; record/account migration is a separate task.
+The current Bedrock blocker is documented in [validation](../docs/validation.md): agreement activation succeeded, but AWS still denies GPT-6 Sol to the account. Recreating infrastructure or widening runtime permissions does not establish provider eligibility.
 
-## Protection and removal
+## Teardown
 
-Terraform `prevent_destroy` protects AWS DynamoDB/Cognito and Azure storage/Entra registration. AWS deletion protection and an Azure storage `CanNotDelete` lock add service-side protection. A normal destroy is therefore expected to fail until protection is deliberately removed. Export data, review which resources remain billable and remove protections only as part of an explicit teardown. Deleting state does not delete resources. See [AWS details](aws/README.md) and [Azure details](azure/README.md) and [combo details](combo/README.md) for service costs, security and live checks.
+Export application data and preserve a protected state/configuration backup. Review the exact cloud resources and any shared identity/provider dependencies. Azure storage/browser registration and AWS DynamoDB/Cognito have Terraform destruction guards; Azure storage also has a lock and AWS data/identity resources have service protections.
+
+Remove protections only for an explicitly authorized teardown. Use a reviewed saved destroy plan, keep state until completion, and restore protected source before any rebuild. Inspect cloud resources and a final plan afterwards. Deleting a resource group does not remove its global Entra apps or AWS federation resources. Retained resources and backup copies may still incur charges.

@@ -15,6 +15,12 @@ override_resource {
     output = { properties = { principalId = "33333333-3333-4333-8333-333333333333", clientId = "44444444-4444-4444-8444-444444444444" } }
   }
 }
+
+override_resource {
+  target          = azapi_resource.storage
+  override_during = plan
+  values          = { id = "/subscriptions/11111111-1111-4111-8111-111111111111/resourceGroups/test/providers/Microsoft.Storage/storageAccounts/teststorage" }
+}
 override_resource {
   target          = azuread_application_registration.bedrock
   override_during = plan
@@ -38,6 +44,10 @@ override_resource {
 }
 run "cheap_private_managed_defaults" {
   command = plan
+  assert {
+    condition     = azapi_resource.identity.location == "eastus2" && azapi_resource.api.location == "eastus2" && azapi_resource.storage.location == "eastus2" && azapi_resource.web.location == "eastus2"
+    error_message = "Use supported backend and static-hosting regions independently."
+  }
   assert {
     condition     = azuread_application_registration.bedrock.requested_access_token_version == 1 && azuread_service_principal.bedrock.app_role_assignment_required && azuread_app_role_assignment.bedrock.principal_object_id == azapi_resource.identity.output.properties.principalId
     error_message = "Federation must use the assigned managed identity and a dedicated v1 audience."
@@ -71,7 +81,7 @@ run "cheap_private_managed_defaults" {
     error_message = "Use single-tenant Entra authentication with v2 API access tokens."
   }
   assert {
-    condition     = azapi_resource.storage_lock.body.properties.level == "CanNotDelete" && azapi_resource.blobs.body.properties.deleteRetentionPolicy.days == 7 && !azapi_resource.blobs.body.properties.isVersioningEnabled
+    condition     = azapi_resource.storage_lock.body.properties.level == "CanNotDelete" && azapi_update_resource.blobs.body.properties.deleteRetentionPolicy.days == 7 && !azapi_update_resource.blobs.body.properties.isVersioningEnabled && endswith(azapi_update_resource.blobs.resource_id, "/blobServices/default")
     error_message = "Keep explicit data protection and bounded soft-delete retention."
   }
   assert {
@@ -80,11 +90,20 @@ run "cheap_private_managed_defaults" {
   }
 }
 
+run "retain_existing_resource_group_location" {
+  command = plan
+  variables { resource_group_region = "westeurope" }
+  assert {
+    condition     = azapi_resource.group.location == "westeurope" && azapi_resource.api.location == "eastus2"
+    error_message = "Moving uncreated workloads must not relocate the existing resource group."
+  }
+}
+
 run "gpt6_sol_scoped_project_and_models" {
   command = plan
   variables {
     model_id         = "arn:aws:bedrock:eu-west-2:123456789012:inference-profile/global.openai.gpt-6-sol"
-    extra_model_arns = ["arn:aws:bedrock:us-east-1::foundation-model/openai.gpt-6-sol", "arn:aws:bedrock:us-west-2::foundation-model/openai.gpt-6-sol"]
+    extra_model_arns = ["arn:aws:bedrock:::foundation-model/openai.gpt-6-sol", "arn:aws:bedrock:eu-west-2::foundation-model/openai.gpt-6-sol"]
   }
   assert {
     condition     = toset(jsondecode(aws_iam_role_policy.bedrock.policy).Statement[0].Resource) == toset(concat([var.model_id], var.extra_model_arns, ["arn:aws:bedrock:eu-west-2:123456789012:project/default"]))

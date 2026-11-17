@@ -11,7 +11,7 @@ resource "azapi_resource" "group" {
   type      = "Microsoft.Resources/resourceGroups@2024-03-01"
   name      = local.prefix
   parent_id = local.subscription
-  location  = var.region
+  location  = coalesce(var.resource_group_region, var.region)
   tags      = local.tags
 }
 resource "azapi_resource" "identity" {
@@ -42,10 +42,11 @@ resource "azapi_resource" "storage" {
   }
   lifecycle { prevent_destroy = true }
 }
-resource "azapi_resource" "blobs" {
-  type      = "Microsoft.Storage/storageAccounts/blobServices@2023-05-01"
-  name      = "default"
-  parent_id = azapi_resource.storage.id
+// Azure creates this singleton with the storage account. Update its settings
+// instead of trying to create an already-existing child resource.
+resource "azapi_update_resource" "blobs" {
+  type        = "Microsoft.Storage/storageAccounts/blobServices@2023-05-01"
+  resource_id = "${azapi_resource.storage.id}/blobServices/default"
   body = { properties = {
     deleteRetentionPolicy          = { enabled = true, days = 7 }
     containerDeleteRetentionPolicy = { enabled = true, days = 7 }
@@ -56,7 +57,7 @@ resource "azapi_resource" "containers" {
   for_each  = toset(["applications", "function-packages"])
   type      = "Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01"
   name      = each.value
-  parent_id = azapi_resource.blobs.id
+  parent_id = azapi_update_resource.blobs.id
   body      = { properties = { publicAccess = "None" } }
 }
 resource "azapi_resource" "storage_role" {
@@ -79,7 +80,7 @@ resource "azapi_resource" "web" {
   type                   = "Microsoft.Web/staticSites@2023-12-01"
   name                   = "${local.prefix}-web-${local.suffix}"
   parent_id              = azapi_resource.group.id
-  location               = var.region
+  location               = var.static_web_region
   tags                   = local.tags
   body                   = { sku = { name = "Free", tier = "Free" }, properties = { allowConfigFileUpdates = true } }
   response_export_values = ["properties.defaultHostname"]

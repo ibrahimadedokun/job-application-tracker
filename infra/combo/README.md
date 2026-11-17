@@ -1,90 +1,94 @@
-# Azure + AWS Terraform target
+# Azure hosting with AWS Bedrock
 
-This target hosts the application on Azure and runs its document-tailoring AI through Amazon Bedrock Converse. It uses the same consent checks, prompts and output validation as the AWS target. The AI agent runs in the Function; no managed Bedrock Agent, AgentCore runtime or Foundry deployment is provisioned.
+This is the current live deployment target. Azure hosts the UI, API and private records; application code invokes Bedrock through temporary AWS credentials. See the [current system design](../../docs/architecture.md) for decisions and trust boundaries, and [deployment operations](../README.md) for common commands/state management.
 
-| Component                       | Service                                              | Cost behavior                                         |
-| ------------------------------- | ---------------------------------------------------- | ----------------------------------------------------- |
-| Frontend                        | Azure Static Web Apps Free                           | Free within hobby-tier quotas, no SLA                 |
-| API                             | Azure Functions Flex Consumption, Node.js 22, 512 MB | Scales to zero, no always-ready instances             |
-| Records and deployment packages | Azure Standard LRS Blob Storage                      | Storage and transaction charges; no database capacity |
-| Login                           | Entra single-tenant SPA and API                      | PKCE, no client secret; members and invited guests    |
-| AI                              | AWS Bedrock, default Nova Micro                      | On-demand inference, no provisioned throughput        |
-| Cross-cloud credentials         | Azure managed identity → AWS STS → Bedrock           | Short-lived credentials, no stored AWS keys           |
+## Defaults and current installation
 
-[Static Web Apps pricing](https://azure.microsoft.com/en-us/pricing/details/app-service/static/) lists 100 GB subscription bandwidth on Free; quota exhaustion can stop serving the site. [Functions pricing](https://azure.microsoft.com/en-us/pricing/details/functions/) lists a subscription-wide Flex on-demand monthly grant of 250,000 executions and 100,000 GB-seconds for eligible offers. Storage, internet egress from Azure to AWS, model inference and usage above grants can incur charges. Cold starts are expected. Functions uses the minimum 40-instance scale ceiling and four concurrent requests per instance. These settings do not cap spending.
+| Setting                     | Source default                                      | Current live configuration         |
+| --------------------------- | --------------------------------------------------- | ---------------------------------- |
+| Azure hosting/storage/group | `eastus2`                                           | East US 2                          |
+| Static-app region           | `azure.static_web_region: eastus2`                  | East US 2                          |
+| Compute                     | Flex Consumption, Node.js 22, 512 MB, scale to zero | Same                               |
+| Frontend/storage            | Free Static Web Apps; Standard LRS private blobs    | Same                               |
+| Bedrock source              | `aws.region: eu-west-2` in example                  | eu-west-2                          |
+| Model                       | Nova Micro example                                  | Global GPT-6 Sol inference profile |
+| Login                       | Single-tenant Entra PKCE and API scope              | Same                               |
 
-No Foundry, SQL/Cosmos, DynamoDB, Lambda, API Gateway, NAT gateway, private endpoints, Application Insights or always-on compute is created. Optional budget email enables separate Azure resource-group and AWS account cost alerts, each at 80% of `budget.amount`; Azure uses the subscription billing currency and AWS uses USD. The AWS alert covers account-wide spending, not just this role. Alerts are not spending caps.
+The current GPT-6 Sol agreement is active, but inference remains denied by AWS account eligibility. Infrastructure, deployment and public HTTP checks passed; the AI feature is not yet validated as working. See the dated [validation record](../../docs/validation.md).
 
-## Configure and deploy
+There is one selected resource/source region per cloud. Global inference can route elsewhere. Free hosting and consumption pricing do not guarantee free operation: storage, internet transfer, inference and usage beyond grants can incur charges. The optional Azure group and AWS account alerts use the configured amount in their respective currencies; neither is a cap. The AWS alert covers account spending beyond this project too.
 
-Use the [shared deployment workflow](../README.md). Install Node.js 22+, Terraform >=1.11,<2, PowerShell 7 and Azure CLI 2.80+. Authenticate to both clouds using Azure CLI and the AWS SDK credential chain/SSO profile.
+## Configure
+
+For a new installation, copy [combo.dev.example.json](../environments/combo.dev.example.json) and edit it using the [shared workflow](../README.md#configure-and-deploy). Retain existing configuration and state for updates.
+
+- Top-level `region` selects the Azure backend; `aws.region` selects Bedrock/STS independently.
+- Both `azure` and `aws` account sections are required; Foundry model settings are ignored.
+- Keep `azure.budget_start_date` stable. Additional frontend origins belong in `azure.extra_origins`.
+- Leave `aws.existing_oidc_provider_arn` empty unless deliberately reusing a provider managed elsewhere.
+
+The caller needs Azure/Entra resource and role-assignment permissions plus AWS IAM and optional budget permissions. Federation requires directory permission to assign an application role to the managed identity. Runtime identities receive storage/model invocation permissions, not model-subscription privileges.
+
+Combo plan/apply checks Flex Consumption and the resource-provider region lists. For an existing resource group it also performs provider-level ARM validation of identity, storage, FC1 plan and Free static-app resources. For a new group, final subscription eligibility is determined when Azure provisions resources. Capacity and policy can change after validation. [Microsoft describes the West Europe restriction](https://learn.microsoft.com/en-us/azure/azure-resource-manager/troubleshooting/error-region-access-policy).
+
+`azure.resource_group_region` is only needed when deliberately retaining an existing group's metadata location during recovery. Omit it for a clean installation so the group follows `region`. Moving the metadata location can replace the group; changing workload locations can replace those resources too. Follow the shared recovery procedure and inspect the plan rather than bypassing the target guard.
+
+## Bedrock model access
+
+There are separate readiness gates: IAM permission, model agreement/entitlement, regional availability, account-specific eligibility and usable quota. A successful apply, an active inference profile, an IAM simulation or even all availability fields reporting `AVAILABLE` does not prove actual inference access. AWS may require [additional account-level approval](https://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html).
+
+For GPT-6 Sol, Bedrock Runtime uses a cross-region profile; the bare regional foundation-model ID is not valid for this path. Retrieve the actual profile and model resources:
 
 ```powershell
-npm ci
-Copy-Item infra/environments/combo.dev.example.json deployment.json
-# Edit Azure tenant/subscription and AWS account/region/model values.
-az login --tenant YOUR-TENANT-ID
-$env:AWS_PROFILE = 'YOUR-AWS-PROFILE'
-aws sso login --profile $env:AWS_PROFILE
-npm run check
-npm run infra:plan
-npm run deploy
+aws bedrock get-inference-profile --region eu-west-2 --inference-profile-identifier global.openai.gpt-6-sol --query '{profileArn:inferenceProfileArn,modelArns:models[].modelArn,status:status}' --output json
+aws bedrock get-foundation-model-availability --region eu-west-2 --model-id openai.gpt-6-sol --output json
 ```
 
-`cloud: "combo"` selects this root. Top-level `region` is the Azure hosting region; `aws.region` is the Bedrock/STS region. Both `azure` and `aws` sections are required. Azure Foundry model settings are ignored. The default [Nova Micro model](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-amazon-nova-micro.html) is a low-cost text model; confirm regional availability, access, quotas and document quality in your AWS account before deploying. Other Converse models are configurable. Inference profiles require their full ARN and explicit destination foundation-model ARNs in `aws.extra_model_arns`; wildcards are rejected. Profiles may process documents across regions.
+Set `aws.model_id` to the returned full profile ARN and `aws.extra_model_arns` to all returned foundation-model ARNs. The profile must match the configured account/source region. Preserve exact region-agnostic values such as `arn:aws:bedrock:::foundation-model/openai.gpt-6-sol`; do not insert a region or wildcard. Review profile routing and organizational region policies when it changes.
 
-### Use OpenAI GPT-6 Sol
+The target adds the exact account/source-region `project/default` invocation resource for numbered OpenAI GPT models. Project ARNs do not belong in `extra_model_arns`. Detection also examines destination ARNs for opaque application profiles. GPT requests omit temperature and use low reasoning effort; regional GPT OSS models retain their separate behavior. See [AWS model documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-sol.html) for current capabilities and rates.
 
-[GPT-6 Sol on Bedrock Runtime](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-sol.html) requires a cross-region inference profile. London (`eu-west-2`) supports `global.openai.gpt-6-sol`; it does not support regional-only inference for this model. Activate account access through the Bedrock model catalog/playground using a deployment identity with the required Marketplace permissions before relying on the app. The runtime role receives invocation permissions only and cannot subscribe to models.
+Model agreements are an operator step that can accept provider terms and enable billing. They are not automatically accepted by Terraform or publishing. Once prerequisites are satisfied, authorize a small fictional test using the same runtime identity/path; an administrator's successful model call alone would not prove federation works. If AWS says the model is unavailable to the account, request access through AWS rather than broadening the runtime role or rebuilding resources.
 
-Retrieve the profile and all current destination model ARNs from your selected source region. With an existing, edited `deployment.json`, this PowerShell example updates only its Bedrock configuration and checks the CLI result before writing:
+## Federation and OIDC reuse
+
+The dedicated Entra federation registration emits v1 app-only tokens. Its application role is assigned to the Function's managed identity. AWS trusts the tenant's `sts.windows.net` issuer, exact audience and identity principal as subject. The browser/API registration separately uses v2 delegated tokens. The [AWS federation pattern](https://aws.amazon.com/blogs/security/how-to-access-aws-resources-from-microsoft-entra-id-tenants-using-aws-security-token-service/) explains this exchange.
+
+The credential provider uses Azure managed identity, coalesces concurrent refreshes, caches temporary STS credentials and refreshes five minutes before expiry. Tokens and credentials remain server-side; neither appears in frontend configuration.
+
+AWS allows only one IAM OIDC provider for an issuer URL per account. To find an existing one:
 
 ```powershell
-$comboConfig = Get-Content -LiteralPath deployment.json -Raw | ConvertFrom-Json
-if ($comboConfig.cloud -ne 'combo') { throw 'Select the combo target first.' }
-$profileJson = aws bedrock get-inference-profile --region $comboConfig.aws.region --inference-profile-identifier global.openai.gpt-6-sol --output json
-if ($LASTEXITCODE -ne 0) { throw 'Could not retrieve the GPT-6 Sol inference profile.' }
-$bedrockProfile = $profileJson | ConvertFrom-Json
-if ($bedrockProfile.status -ne 'ACTIVE' -or -not $bedrockProfile.models) { throw 'The profile is not ready.' }
-$comboConfig.aws.model_id = $bedrockProfile.inferenceProfileArn
-$comboConfig.aws.extra_model_arns = @($bedrockProfile.models | ForEach-Object { $_.modelArn })
-$comboConfig | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath deployment.json
-npm run infra:plan
-npm run deploy
+aws iam list-open-id-connect-providers --query 'OpenIDConnectProviderList[].Arn' --output table
 ```
 
-The profile must match `aws.account_id` and `aws.region`. The runner rejects a bare GPT model ID or a mismatched profile before Terraform runs; Terraform independently enforces these rules. Refresh the destination list if AWS changes a profile's routing. The account must permit the selected cross-region destinations through its organization policies.
+Match the tenant issuer, then inspect it using `aws iam get-open-id-connect-provider --open-id-connect-provider-arn YOUR-ARN`. Reuse requires its owner to add this installation's `api://<federation-client-id>` audience. The audience is available as `deployment.federation_audience` after apply. A first setup against an externally owned provider may need staged registration creation before the owner can add that audience. Never give two Terraform states ownership of the same provider. If this target already owns the provider, keep the reuse field empty.
 
-For OpenAI GPT models, Terraform automatically adds the exact `arn:aws:bedrock:<aws.region>:<aws.account_id>:project/default` invocation resource alongside the profile and destination models. Do not put project ARNs in `extra_model_arns`, which remains restricted to foundation-model ARNs. Detection uses both the selected profile name and destination model ARNs, including for application inference profiles with opaque names. Other model families receive no extra project permission.
+## Storage and publication
 
-The Function receives the detected model family through `BEDROCK_OPENAI_GPT`. GPT requests omit temperature and use low reasoning effort within the existing token/deadline limits. Nova retains its sampling settings. No inference or Marketplace subscription is attempted during Terraform or publication; live model access, regional capacity, quota and output quality must still be verified with a consented fictional tailoring request after deployment.
+Azure creates `blobServices/default` with the storage account. This target updates it using `azapi_update_resource.blobs`; no manual import is required on a fresh deployment. Older installations that tracked that child under `azapi_resource.blobs` need an explicit state transition before adopting the new type.
 
-Set `azure.budget_start_date` to the first day of the initial deployment month and retain it thereafter. `azure.extra_origins` adds HTTPS origins for CORS and SPA callbacks. Custom domain binding remains separate. Single-tenant Entra login requires members or invited B2B guests, with tenant consent where required.
+Private records and Function packages use separate containers in one account. Seven-day soft deletion and the account lock are enabled; versioning is disabled. These are not complete backup/overwrite-recovery controls.
 
-The Azure caller needs resource/provider creation, storage role assignment and Entra app-management permissions. Federation additionally needs directory permission to assign an application role to the managed identity (for unattended Graph callers, the applicable `AppRoleAssignment.ReadWrite.All` and application-read permissions with admin consent). Subscription Owner alone does not provide those directory rights. AWS credentials must match `aws.account_id` and permit IAM OIDC providers/roles/policies and optional Budgets administration. Bedrock model access must already be available to the account.
+After apply, the publisher builds the Entra/Blob/Bedrock Function package, uploads its ZIP and deploys the static frontend with public runtime configuration. It uses pinned SWA CLI and a process-local deployment token. It does not provision a Foundry agent or invoke a model. Retry failed publication with `deploy:publish` rather than recreating infrastructure.
 
-Terraform prompts before applying. Publishing packages the shared Azure authentication/storage adapters with the Bedrock runtime, uploads the Function ZIP and publishes the frontend with pinned SWA CLI. No model call occurs during deployment. Retry a failed upload using `npm run deploy:publish`. State and artifacts are isolated in `.local/terraform/<name>/<environment>/combo/`; the target guard includes both cloud accounts, tenant, both regions and backend. Resources use a `-combo` name suffix to coexist with Azure-only installations. A new target has separate identities and an empty datastore; it does not migrate existing applications.
-
-## Federation and permissions
-
-The [AWS-documented managed-identity federation pattern](https://aws.amazon.com/blogs/security/how-to-access-aws-resources-from-microsoft-entra-id-tenants-using-aws-security-token-service/) exchanges an Entra token for temporary AWS role credentials. This target creates a dedicated single-tenant registration with **v1** access tokens and an application role assigned exclusively to the Function identity. The browser/API registration continues using v2 delegated access tokens. AWS trusts the exact `sts.windows.net/<tenant>/` issuer, dedicated federation audience and managed identity principal ID as subject. The role can only `bedrock:InvokeModel` on configured model resources and, for OpenAI GPT, the account/region's default project. No credentials enter frontend configuration or runtime logs.
-
-The runtime explicitly uses `ManagedIdentityCredential`, avoiding a developer credential fallback. It requests a token only on the first AI call, caches STS credentials in memory and refreshes five minutes before expiry. Concurrent refreshes share one exchange; failed refreshes can be retried. STS and Bedrock use one SDK attempt, bounded token/exchange deadlines and a 55-second model deadline. Model output is validated before saving. Document storage and CRUD remain in Azure; only consented tailoring prompts go to AWS. Provider retention and processing policies apply. Client timeouts cannot guarantee inference cancellation or zero billing.
-
-AWS permits one IAM OIDC provider per issuer URL per account. For an account that already has this tenant's v1 issuer, set `aws.existing_oidc_provider_arn`. Add this installation's federation audience to that provider through its existing owner first; this target validates the issuer/audience and does not take over that provider. The audience is `api://<federation-application-client-id>`, available as `deployment.federation_audience` after apply. For first setup when the registration does not yet exist, an operator can stage the reviewed creation of `azuread_application_identifier_uri.bedrock` and its dependencies in the generated root using Terraform `-target`, then update the externally owned provider's audience and complete a full plan/apply. Do not import an externally managed provider into two states. Do not remove a shared provider while other roles depend on it.
-
-## Verify and retain data
-
-Local `npm run check` covers all three Terraform roots with mock providers, credential refresh tests and deployable package checks. Live availability, managed identity issuance, Graph consent, IAM/RBAC propagation, model quotas and latency still require account verification.
-
-Open `web_url` from `npm run infra:output`. Sign in, create/update/export a fictional record and refresh to verify persistence. Check a second user's isolation and sign-out. The shared Azure smoke script also works here:
+## Verification and troubleshooting
 
 ```powershell
 node infra/azure/smoke.mjs https://YOUR-SITE.azurestaticapps.net
-# Optional authenticated CRUD: set AZURE_SMOKE_ACCESS_TOKEN locally.
-# Add --tailor only to make one billable Bedrock request with fictional data.
 ```
 
-Treat the smoke token as a credential and clear it afterwards. For STS failures check tenant, v1 token version, audience, subject and application-role assignment; never log full tokens. For AI access errors check model access/region and the role's allowed model ARNs. New directory and IAM settings may need time to propagate.
+The public check verifies runtime configuration and HTTP 401 for anonymous API calls. With a locally set `AZURE_SMOKE_ACCESS_TOKEN`, the script creates/updates/exports/deletes a fictional record. `--tailor` additionally makes one billable model request. Clear the token afterwards. Test a second user's isolation and browser sign-in/sign-out separately.
 
-Storage uses managed identity, HTTPS, private containers, seven-day soft deletion, `prevent_destroy` and a `CanNotDelete` lock. The browser registration is also protected from Terraform destruction. Soft deletion does not provide complete overwrite recovery; export records for backups. Follow the [shared state/adoption/teardown guidance](../README.md) before adopting existing resources or removing protection. Retained storage continues to incur charges.
+| Symptom                       | Check                                                                                             |
+| ----------------------------- | ------------------------------------------------------------------------------------------------- |
+| API 401                       | Tenant, audience, calling client, delegated scope and token expiry                                |
+| Credential/federation failure | Managed identity assignment, federation app role, v1 issuer, exact audience/subject and STS trust |
+| Bedrock 503/access denied     | Provider agreement, account eligibility, actual model resources and organizational restrictions   |
+| AI 429                        | Model quota, throttling and concurrency; avoid repeated generation clicks                         |
+| AI 504                        | Model/input latency and deadline; a timed-out request may still be billed                         |
+| Storage 403                   | Identity role at the correct account scope and permission propagation                             |
+| Existing blob-service error   | Confirm use of the update resource; reconcile any older state ownership                           |
+| Region/target mismatch        | Inspect configuration and existing state; use reviewed migration, not state deletion              |
+
+Use the [shared teardown procedure](../README.md#teardown) for removal. Storage and browser identity protections remain enabled. Check shared OIDC consumers and global Entra/AWS resources as well as the Azure resource group.

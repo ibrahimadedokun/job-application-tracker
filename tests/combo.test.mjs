@@ -7,6 +7,7 @@ import {
 } from "../infra/config.mjs";
 import { createFederatedCredentials } from "../infra/combo/api/credentials.mjs";
 import { createBedrockGenerator } from "../server/bedrock.mjs";
+import { regionValidationTemplate } from "../infra/combo/regions.mjs";
 
 test("combo accepts GPT-6 Sol profiles and rejects regional or mismatched profile configuration", async () => {
   const config = await readConfiguration(
@@ -16,9 +17,11 @@ test("combo accepts GPT-6 Sol profiles and rejects regional or mismatched profil
     "arn:aws:bedrock:eu-west-2:123456789012:inference-profile/global.openai.gpt-6-sol";
   const aws = {
     ...config.aws,
+    account_id: "123456789012",
     model_id: model,
     extra_model_arns: [
-      "arn:aws:bedrock:us-east-1::foundation-model/openai.gpt-6-sol",
+      "arn:aws:bedrock:::foundation-model/openai.gpt-6-sol",
+      "arn:aws:bedrock:eu-west-2::foundation-model/openai.gpt-6-sol",
     ],
   };
   assert.equal(
@@ -49,6 +52,20 @@ test("combo accepts GPT-6 Sol profiles and rejects regional or mismatched profil
       parseConfiguration({ ...config, aws: { ...aws, extra_model_arns: [] } }),
     /destination/,
   );
+  for (const invalid of [
+    "arn:aws:bedrock:::foundation-model/*",
+    "arn:aws:bedrock:::inference-profile/global.openai.gpt-6-sol",
+    "arn:aws:bedrock:::foundation-model/openai.gpt-6-sol/invalid",
+  ]) {
+    assert.throws(
+      () =>
+        parseConfiguration({
+          ...config,
+          aws: { ...aws, extra_model_arns: [invalid] },
+        }),
+      /foundation-model/,
+    );
+  }
 });
 
 test("Bedrock requests support GPT reasoning profiles and preserve Nova sampling", async () => {
@@ -121,7 +138,8 @@ test("combo selects both accounts, separate regions and the Bedrock model", asyn
     "infra/environments/combo.dev.example.json",
   );
   const vars = terraformVariables(config, "/tmp/artifacts");
-  assert.equal(vars.region, "westeurope");
+  assert.equal(vars.region, "eastus2");
+  assert.equal(vars.static_web_region, "eastus2");
   assert.equal(vars.aws_region, "eu-west-2");
   assert.equal(vars.model_id, config.aws.model_id);
   assert.equal(vars.subscription_id, config.azure.subscription_id);
@@ -134,6 +152,26 @@ test("combo selects both accounts, separate regions and the Bedrock model", asyn
     { ...config, aws: { ...config.aws, model_id: "*" } },
   ])
     assert.throws(() => parseConfiguration(input));
+});
+
+test("combo validates each service region and can preserve existing group metadata", async () => {
+  const config = await readConfiguration(
+    "infra/environments/combo.dev.example.json",
+  );
+  config.azure.resource_group_region = "westeurope";
+  const vars = terraformVariables(config, "/tmp/artifacts");
+  assert.equal(vars.resource_group_region, "westeurope");
+  const template = regionValidationTemplate(config);
+  assert.equal(template.resources.length, 4);
+  for (const resource of template.resources) {
+    assert.equal(resource.location, "eastus2");
+  }
+  const azureOnly = terraformVariables(
+    { ...config, cloud: "azure" },
+    "/tmp/artifacts",
+  );
+  assert.equal(azureOnly.static_web_region, undefined);
+  assert.equal(azureOnly.resource_group_region, undefined);
 });
 
 test("federation coalesces requests, caches temporary credentials and refreshes before expiry", async () => {

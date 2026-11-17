@@ -21,6 +21,9 @@ export function deploymentConfig(
     );
   const modelArn =
     /^arn:aws(?:-us-gov|-cn)?:bedrock:[a-z0-9-]+:(?:\d{12})?:(?:foundation-model|inference-profile|application-inference-profile)\/[A-Za-z0-9._:/-]+$/;
+  // Global cross-region profiles can return a region-agnostic foundation model.
+  const globalModelArn =
+    /^arn:aws:bedrock:::foundation-model\/[A-Za-z0-9._:-]+$/;
   if (
     model &&
     !(model.startsWith("arn:")
@@ -32,7 +35,9 @@ export function deploymentConfig(
     );
   if (
     extraModelArns.some(
-      (arn) => !modelArn.test(arn) || !arn.includes(":foundation-model/"),
+      (arn) =>
+        (!modelArn.test(arn) && !globalModelArn.test(arn)) ||
+        !arn.includes(":foundation-model/"),
     )
   )
     throw new Error(

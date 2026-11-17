@@ -33,6 +33,14 @@ export const configurationSchema = z
       .object({
         subscription_id: guid,
         tenant_id: guid,
+        resource_group_region: z
+          .string()
+          .regex(/^[a-z][a-z0-9]+$/)
+          .optional(),
+        static_web_region: z
+          .string()
+          .regex(/^[a-z][a-z0-9]+$/)
+          .optional(),
         foundry_region: z.string().default("swedencentral"),
         model_id: z.string().default("gpt-4.1-nano"),
         model_version: z.string().default("2025-04-14"),
@@ -112,7 +120,7 @@ export function parseConfiguration(input) {
       );
     if (profile && !model.startsWith(`arn:aws:bedrock:${region}:${account}:`))
       throw new Error(
-        "The Bedrock inference profile must match aws.account_id and aws.region.",
+        `The Bedrock inference profile must match aws.account_id (${account}) and aws.region (${region}). Received: ${model}. Expected prefix: arn:aws:bedrock:${region}:${account}:`,
       );
   }
   return config;
@@ -132,6 +140,8 @@ export function terraformVariables(config, artifacts) {
       tenant_id: config.azure.tenant_id,
       budget_start_date: config.azure.budget_start_date,
       extra_origins: config.azure.extra_origins,
+      resource_group_region: config.azure.resource_group_region ?? null,
+      static_web_region: config.azure.static_web_region || "eastus2",
       account_id: config.aws.account_id,
       aws_region: config.aws.region,
       model_id: config.aws.model_id,
@@ -143,13 +153,15 @@ export function terraformVariables(config, artifacts) {
     existing_oidc_provider_arn,
     ...aws
   } = config.aws || {};
+  const { resource_group_region, static_web_region, ...azure } =
+    config.azure || {};
   return {
     name: config.name,
     environment: config.environment,
     region: config.region,
     budget_amount: config.budget.amount,
     budget_email: config.budget.email,
-    ...(config.cloud === "aws" ? aws : config.azure),
+    ...(config.cloud === "aws" ? aws : azure),
     ...(config.cloud === "aws"
       ? { lambda_bundle_path: artifacts.replaceAll("\\", "/") + "/index.mjs" }
       : {}),
