@@ -1,5 +1,11 @@
 node_modules/
 dist/
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+deployment.json
 cdk.out/
 .local/
 .env*

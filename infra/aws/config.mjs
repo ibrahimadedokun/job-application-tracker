@@ -2,8 +2,8 @@ export function deploymentConfig(
   env = process.env,
   { deployment = false } = {},
 ) {
-  const account = env.AWS_ACCOUNT_ID || env.CDK_DEFAULT_ACCOUNT;
-  const region = env.AWS_REGION || env.CDK_DEFAULT_REGION || "eu-west-2";
+  const account = env.AWS_ACCOUNT_ID;
+  const region = env.AWS_REGION || "eu-west-2";
   const model = env.BEDROCK_MODEL_ID?.trim();
   const extraModelArns = (env.BEDROCK_EXTRA_MODEL_ARNS || "")
     .split(",")
@@ -25,7 +25,7 @@ export function deploymentConfig(
     model &&
     !(model.startsWith("arn:")
       ? modelArn.test(model)
-      : /^[A-Za-z0-9._-]+$/.test(model))
+      : /^[A-Za-z0-9._:-]+$/.test(model))
   )
     throw new Error(
       "BEDROCK_MODEL_ID must be a model ID or a Bedrock model/profile ARN without wildcards.",

@@ -1,5 +1,8 @@
 node_modules/
 dist/
+.terraform/
+*.tfstate*
+*.tfplan
 cdk.out/
 .local/
 test-results/

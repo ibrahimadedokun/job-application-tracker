@@ -1,51 +1,7 @@
-import {
-  BedrockRuntimeClient,
-  ConverseCommand,
-} from "@aws-sdk/client-bedrock-runtime";
 import { createStore } from "./store.mjs";
 import { createApi as createApplication } from "./application.mjs";
-import { resultSchema, promptFor } from "./core.mjs";
-// Keep model calls inside HTTP API's 29-second integration deadline. SDK
-// retries could otherwise continue generating (and billing) after a disconnect.
-const bedrock = new BedrockRuntimeClient({ maxAttempts: 1 });
-export function createBedrockGenerator({
-  client = bedrock,
-  timeoutMs = 24000,
-} = {}) {
-  return async (job, source) => {
-    if (!process.env.BEDROCK_MODEL_ID)
-      throw Object.assign(
-        new Error(
-          "AI tailoring is not configured. Set BEDROCK_MODEL_ID to an enabled Bedrock model.",
-        ),
-        { status: 503 },
-      );
-    const r = await client.send(
-      new ConverseCommand({
-        modelId: process.env.BEDROCK_MODEL_ID,
-        ...promptFor(job, source),
-        inferenceConfig: { maxTokens: 7000, temperature: 0.35 },
-      }),
-      { abortSignal: AbortSignal.timeout(timeoutMs) },
-    );
-    const output =
-      r.output?.message?.content?.map((c) => c.text || "").join("") || "";
-    try {
-      return resultSchema.parse(
-        JSON.parse(
-          output.replace(/^```(?:json)?\s*/, "").replace(/\s*```$/, ""),
-        ),
-      );
-    } catch {
-      throw Object.assign(
-        new Error(
-          "The AI returned an invalid document. Please try again; no version was saved.",
-        ),
-        { status: 502 },
-      );
-    }
-  };
-}
+import { createBedrockGenerator } from "./bedrock.mjs";
+export { createBedrockGenerator } from "./bedrock.mjs";
 export function createApi({
   store = createStore(),
   generate = createBedrockGenerator(),

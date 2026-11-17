@@ -1,3 +1,0 @@
-{
-  "app": "node infra/aws/app.mjs"
-}

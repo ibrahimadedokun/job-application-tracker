@@ -1,11 +1,24 @@
 import { build } from "esbuild";
 import { cp, mkdir, readFile, writeFile, rm } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { resolve, relative } from "node:path";
+import { resolve, relative, isAbsolute } from "node:path";
 import { spawnSync } from "node:child_process";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
-const output = resolve(root, ".local/azure");
+const argument = (flag) =>
+  process.argv.includes(flag)
+    ? process.argv[process.argv.indexOf(flag) + 1]
+    : undefined;
+const output = resolve(root, argument("--output") || ".local/azure");
+const outputRelative = relative(resolve(root, ".local"), output);
+if (
+  outputRelative.startsWith("..") ||
+  isAbsolute(outputRelative) ||
+  !outputRelative
+)
+  throw new Error(
+    "Azure artifacts must be inside the workspace's .local directory.",
+  );
 function run(command, args, cwd = root) {
   // Only these fixed build commands are accepted; no user input enters a shell.
   if (![command, ...args].every((value) => /^[a-z0-9=-]+$/.test(value)))
@@ -29,7 +42,7 @@ for (const name of ["api", "web"]) {
   const target = resolve(output, name);
   if (
     relative(root, target).startsWith("..") ||
-    target !== resolve(root, ".local", "azure", name)
+    target !== resolve(output, name)
   )
     throw new Error("Generated directory is outside the workspace.");
   await rm(target, { recursive: true, force: true });
@@ -88,15 +101,30 @@ await writeFile(
     2,
   ),
 );
+const agentConfig = argument("--agent-config")
+  ? JSON.parse(await readFile(argument("--agent-config"), "utf8"))
+  : null;
 await build({
   absWorkingDir: root,
-  entryPoints: ["infra/azure/api/index.mjs"],
+  entryPoints: [
+    process.argv.includes("--combo")
+      ? "infra/combo/api/index.mjs"
+      : "infra/azure/api/index.mjs",
+  ],
   outfile: `${output}/api/index.mjs`,
   bundle: true,
   platform: "node",
   target: "node22",
   format: "esm",
   external: ["@azure/functions"],
+  // Publishing pins the agent in code, without mutating Terraform app settings.
+  define: agentConfig
+    ? {
+        "process.env.FOUNDRY_AGENT_VERSION": JSON.stringify(
+          agentConfig.version,
+        ),
+      }
+    : {},
   banner: {
     js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);",
   },

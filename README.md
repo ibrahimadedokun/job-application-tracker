@@ -1,6 +1,6 @@
 # Folio — your next chapter, organised
 
-A private job application workspace with a responsive UI, status timelines, CV and cover letter tailoring, and a version history for each opportunity. Built with React and Node.js, with serverless AWS and Azure deployment options.
+A private job application workspace with a responsive UI, status timelines, CV and cover letter tailoring, and a version history for each opportunity. Built with React and Node.js, with serverless AWS, Azure and combined Azure/AWS deployment options.
 
 ![Folio dashboard](docs/dashboard.png)
 
@@ -51,99 +51,32 @@ flowchart LR
 
 [Detailed architecture, data lifecycle and security boundaries](docs/architecture.md).
 
-## Azure deployment
+## Deployment with Terraform
 
-See [infra/azure/README.md](infra/azure/README.md) for the complete Azure setup, costs, prerequisites and live verification checklist. It uses a Free Static Web App, a scale-to-zero Functions API, private LRS Blob Storage, Entra sign-in and Microsoft Foundry Agent Service for tailoring with a low-cost GPT-4.1 nano model. Storage and AI usage are billable.
+All three targets use the same configuration format and deployment commands. Copy the AWS, Azure or combo example to `deployment.json`, edit its values, and select the target with `cloud: "aws"`, `cloud: "azure"` or `cloud: "combo"`. Each cloud/environment gets separate Terraform state. Switching targets deploys an independent installation; it does not migrate records or accounts.
 
 ```powershell
 npm ci
-az login
-$env:AZURE_SUBSCRIPTION_ID = 'YOUR-SUBSCRIPTION-GUID'
-az account set --subscription $env:AZURE_SUBSCRIPTION_ID
-az bicep install
-npm run azure:identity
-npm run azure:check
-npm run azure:deploy
-```
-
-Live deployment requires Azure CLI 2.80.0+, PowerShell 7, model quota and permission to create resources, role assignments and an Entra app registration. Azure commands are separate from the AWS commands below. Preparing the files does not deploy resources or migrate AWS data.
-
-## AWS deployment
-
-AWS infrastructure is defined in [infra/aws/app.mjs](infra/aws/app.mjs) using AWS CDK. Deployment definitions are grouped by cloud provider under `infra/`, with Azure alongside AWS in `infra/azure/`. Run the deployment commands below from the repository root. All AWS values are configurable; the local demo needs none of them. A valid AWS account and enabled Bedrock model are required for a live deployment. Preparing and validating this repository does not deploy AWS resources; live account checks remain necessary.
-
-1. Configure AWS SSO / a deployment role outside the repository. The AWS SDK credential chain is used; do not paste keys into source files. The deployment identity needs CloudFormation, CDK bootstrap, IAM role creation/pass-role, and permissions for the services in the diagram. The runtime Lambda gets a narrower policy.
-2. Choose a supported Bedrock model in your region. Complete any required provider use-case/access steps in the Bedrock console, check current pricing, and confirm Converse support. The default model is a configurable example, not a guarantee of availability in every account or region.
-3. Export your actual parameters (replace the placeholders):
-
-```sh
-export AWS_ACCOUNT_ID=YOUR_12_DIGIT_ACCOUNT_ID
-export AWS_REGION=eu-west-2
-export AWS_PROFILE=YOUR_PROFILE
-export BEDROCK_MODEL_ID=YOUR_ENABLED_MODEL_ID
-# Optional: globally unique Cognito domain prefix; default folio-ACCOUNT-REGION
-# export COGNITO_DOMAIN_PREFIX=your-unique-folio-login
-# Optional budget alert; a notification, NOT a spending limit:
-# export BUDGET_EMAIL=you@example.com
-# export MONTHLY_BUDGET_USD=10
-
-npm ci
+Copy-Item infra/environments/aws.dev.example.json deployment.json
+# Or use infra/environments/azure.dev.example.json
+# Or use infra/environments/combo.dev.example.json
+# Edit the selected account/subscription, tenant, region and model settings.
 npm run check
-npx cdk bootstrap "aws://$AWS_ACCOUNT_ID/$AWS_REGION"
+npm run infra:plan
 npm run deploy
 ```
 
-On Windows PowerShell, use the following environment syntax instead of `export`:
+Install Terraform >=1.11,<2 and Node.js 22+. Authenticate outside the configuration using your AWS SSO/profile or Azure CLI. Azure publishing also needs PowerShell 7 and Azure CLI 2.80+. Terraform manages Entra registration and callbacks automatically. `npm run deploy` runs tests/build, prompts through Terraform apply, then publishes code/assets. Cloud services can incur charges; budget alerts are optional and are not spending caps.
 
-```powershell
-$env:AWS_ACCOUNT_ID = "YOUR_12_DIGIT_ACCOUNT_ID"
-$env:AWS_REGION = "eu-west-2"
-$env:AWS_PROFILE = "YOUR_PROFILE"
-$env:BEDROCK_MODEL_ID = "YOUR_ENABLED_MODEL_ID"
-npm ci
-npm run check
-npx cdk bootstrap "aws://$($env:AWS_ACCOUNT_ID)/$($env:AWS_REGION)"
-npm run deploy
-```
-
-`deploy` first validates configuration and uses STS to confirm that your credentials match `AWS_ACCOUNT_ID`. It then runs the application tests, builds the UI, synthesizes and verifies infrastructure, and runs CDK deployment. Review CDK's IAM approval prompt before proceeding. Deployment creates billable resources and publishes the UI plus runtime `/config.json`. Outputs are saved to `cdk.out/outputs.json`; open `AppUrl`, sign up, verify your email and create a record. The static UI has no embedded AWS secrets. Cognito creates the public browser client with authorization-code + PKCE authentication. `npm run deploy:preflight` checks configuration and identity separately without creating resources.
-
-HTML and runtime configuration bypass CloudFront caching; hashed `/assets/*` files use the optimized cache policy. Deployments invalidate existing CDN content. API requests require an access token with the `openid` scope. Expired sessions return to sign-in. API access logs retain request IDs, route names, status, latency and response length for seven days, without document bodies or tokens.
-
-AI requests have a 24-second deadline, inside the gateway's configured 29-second integration timeout ([AWS HTTP API timeout limits](https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-quotas.html)). A timeout returns HTTP 504 and saves no version; shorten the document or choose a faster model before retrying. Cancellation cannot guarantee that the provider stops processing or charging for work already submitted. For consistently slower models, asynchronous generation with polling is needed before increasing model output limits.
-
-For cross-region Bedrock inference profiles, set `BEDROCK_MODEL_ID` to the **profile ARN**, and `BEDROCK_EXTRA_MODEL_ARNS` to the comma-separated destination foundation-model ARNs allowed by your policy. Cross-region routing affects data residency; choose a regional model if residency is required. The stack deliberately does not grant wildcard model invocation.
-
-### Verify the live deployment
-
-- Open `AppUrl`, register and verify an email. Test sign-out and sign-in.
-- Make an unauthenticated request to `ApiUrl/api/jobs`: expect HTTP 401.
-- Create an application and tailor a fictional CV with explicit consent; check that Bedrock returns full documents and that both versions remain after reload.
-- Create a second account; verify it cannot see or mutate the first account's records.
-- Export, delete the application, refresh, and check its documents are gone from the active database.
-- Check CloudWatch for invocation errors without enabling request-body or model-invocation payload logging.
-
-These cloud-specific checks remain required after deployment; local tests do not prove Cognito, IAM or Bedrock account access.
-
-### Cost choices
-
-There are no EC2 servers, NAT gateways, load balancers or always-running containers. Lambda, HTTP API and DynamoDB on-demand charge primarily for usage. CloudFront/S3/Cognito may have free allowances or account credits depending on account eligibility and current AWS terms; **free is not guaranteed**. Bedrock inference is usage-billed; start with a small model. DynamoDB point-in-time recovery, storage, logs, API requests and outbound data can add charges. The optional monthly budget alert is not a hard cap; concurrency, API throttles, document-size and version limits help bound abuse but do not eliminate costs. Review AWS's current regional prices before deploying.
-
-### Remove services
-
-```sh
-npm run destroy
-```
-
-The private web bucket is deleted. **DynamoDB and Cognito are retained** to prevent accidental loss; delete them manually only after exporting records and confirming the data is no longer required. CDK bootstrap resources and backup recovery windows can also incur residual costs. Application deletion removes active records; prior DynamoDB recovery points persist through the configured recovery window (up to 35 days). Account deletion is an administrator operation in this first version; see the data lifecycle guide.
+See the [shared deployment guide](infra/README.md) for configuration, state backends, environment switching and migration from existing installations. Provider details and live verification: [AWS](infra/aws/README.md), [Azure](infra/azure/README.md), [Azure + AWS](infra/combo/README.md). Combo uses Azure Free Static Web Apps, Functions, Entra and Blob Storage with AWS Bedrock through managed-identity federation. Azure uses Free Static Web Apps, a scale-to-zero Functions API, private LRS blobs and a Foundry prompt agent with GPT-4.1 nano by default; AWS uses CloudFront/S3, Lambda, Cognito, DynamoDB and Bedrock.
 
 ## Validation
 
 ```sh
 npm test                  # backend behavior + security regression tests
 npm run build             # production frontend
-npm run infra:synth       # CloudFormation generation + Lambda bundling (no deployment)
-npm run check             # the three above + infrastructure security assertions
+npm run infra:check       # all three Terraform targets + mocked security tests + runtime packaging
+npm run check             # tests, build and Terraform/package checks
 npx playwright install chromium
 npm run test:e2e          # builds and tests production UI with deployed CSP
 npm run format:check      # repository formatting
@@ -155,8 +88,9 @@ If Chromium is preinstalled, run `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/c
 
 - `src/`: responsive UI, hosted login, workspace, tailoring and version review.
 - `server/`: validated API, Lambda adapter, DynamoDB / local persistence, demo generator.
-- `infra/aws/`: parameterised AWS CDK infrastructure, deployment configuration and security policy.
-- `infra/azure/`: Azure Bicep, Functions adapters, Foundry agent, identity setup, deployment and validation.
+- `infra/aws/`: AWS Terraform, publishing and security policy.
+- `infra/azure/`: Azure Terraform, Functions adapters, Foundry agent and publishing.
+- `infra/combo/`: Azure hosting/storage with federated AWS Bedrock inference.
 - `tests/`: backend and browser tests.
 - `docs/`: architecture, security, deployment validation evidence.
 

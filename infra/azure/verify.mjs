@@ -1,43 +1,11 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 
-const folder = new URL("../../.local/azure/", import.meta.url);
+const flag = process.argv.indexOf("--output");
+const folder = resolve(flag < 0 ? ".local/azure" : process.argv[flag + 1]);
 const json = async (file) =>
-  JSON.parse(await readFile(new URL(file, folder), "utf8"));
-const template = await json("main.json");
-const resources = template.resources;
-const of = (type) => resources.find((resource) => resource.type === type);
-const storage = of("Microsoft.Storage/storageAccounts");
-assert.equal(storage.sku.name, "Standard_LRS");
-assert.equal(storage.properties.allowBlobPublicAccess, false);
-assert.equal(storage.properties.allowSharedKeyAccess, false);
-assert.equal(storage.properties.supportsHttpsTrafficOnly, true);
-assert.equal(of("Microsoft.Web/staticSites").sku.name, "Free");
-assert.equal(of("Microsoft.Web/serverfarms").sku.name, "FC1");
-const api = of("Microsoft.Web/sites");
-assert.equal(api.properties.httpsOnly, true);
-assert.equal(
-  api.properties.functionAppConfig.scaleAndConcurrency.instanceMemoryMB,
-  512,
-);
-assert.equal(
-  api.properties.functionAppConfig.scaleAndConcurrency.alwaysReady,
-  undefined,
-);
-assert.equal(
-  api.properties.functionAppConfig.deployment.storage.authentication.type,
-  "UserAssignedIdentity",
-);
-assert.equal(
-  of("Microsoft.CognitiveServices/accounts").properties.disableLocalAuth,
-  true,
-);
-assert.ok(of("Microsoft.CognitiveServices/accounts/projects"));
-assert.ok(of("Microsoft.Authorization/locks"));
-const settings = api.properties.siteConfig.appSettings;
-assert.ok(
-  !settings.some(({ name }) => /KEY$|SECRET$|CONNECTION_STRING$/.test(name)),
-);
+  JSON.parse(await readFile(resolve(folder, file), "utf8"));
 const web = await json("web/staticwebapp.config.json");
 assert.ok(
   web.globalHeaders["Content-Security-Policy"].includes(
@@ -62,11 +30,11 @@ assert.ok(
   ),
   "The deployable API must not contain local package links.",
 );
-const bundle = await readFile(new URL("api/index.mjs", folder), "utf8");
+const bundle = await readFile(resolve(folder, "api/index.mjs"), "utf8");
 assert.ok(bundle.includes("agent_reference"));
 assert.ok(bundle.includes("access_as_user"));
 assert.ok(!bundle.includes("BedrockRuntimeClient"));
 assert.ok(!bundle.includes("DynamoDBClient"));
 console.log(
-  "Azure infrastructure checks passed: Free frontend, scale-to-zero API, private LRS storage, Entra validation, managed identities, Foundry agent, data retention and security headers.",
+  "Azure package checks passed: security headers, Entra scope, Foundry agent and isolated dependencies.",
 );

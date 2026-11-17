@@ -28,7 +28,7 @@ DynamoDB uses AWS-managed KMS encryption at rest and TLS in transit. This is ser
 - Export downloads the current user's full records as JSON. Treat downloads as sensitive; they are unencrypted on the user's device.
 - Application deletion removes the active item, its originals and all versions. DynamoDB recovery points can retain deleted data for up to 35 days. There is no automatic expiry of active applications.
 - To erase an account: export if requested, delete all that subject's application items, remove the Cognito user, and follow the recovery-window policy. The application UI supports per-application deletion; self-service account erasure is not implemented.
-- Stack destruction retains user pool and table; an administrator must deliberately remove retained data and review remaining CDK bootstrap resources.
+- Terraform and service deletion protection block destructive changes to the user pool and table until an administrator explicitly removes protection after exporting data. State and legacy resource adoption are documented in the deployment guide.
 
 ## Operations and costs
 
@@ -38,4 +38,4 @@ No secrets are built into the frontend or committed. AWS deployment parameters u
 
 ## Deployment readiness
 
-Local functional checks and CloudFormation synthesis verify the code and resource graph. They cannot establish availability of a model, quota, Cognito callback behavior, email deliverability, IAM permissions or a successful AWS deployment. Complete the live checks in the README after connecting an AWS identity. Review budgets and access before inviting users with real personal data.
+Local functional checks, Terraform validation and mocked provider tests verify the code and configured resource graph. They cannot establish availability of a model, quota, Cognito callback behavior, email deliverability, IAM permissions or a successful AWS deployment. Complete the provider guide's live checks after connecting a cloud identity. Review budgets and access before inviting users with real personal data.
