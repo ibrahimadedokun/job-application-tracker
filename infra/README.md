@@ -46,6 +46,21 @@ Only authenticate to the clouds used by the selected target. Keep existing confi
 
 Configuration selection order is explicit `--config`, then `DEPLOYMENT_CONFIG`, then `deployment.json`. The runner does not automatically approve applies. Model inference is not part of apply or publication. Both Azure targets use `infra/azure/publish.ps1`; Azure-only also provisions a Foundry agent version.
 
+## Provider lock files
+
+CI uses Linux (`linux_amd64`), and local Windows development uses `windows_amd64`. Infrastructure checks and deployments initialize Terraform with `-lockfile=readonly`, so the committed lock files must contain provider content hashes (`h1:`) for both platforms. ZIP hashes (`zh:`) alone cannot verify an unpacked provider during validation.
+
+After changing provider versions or constraints, regenerate the source lock files from the repository root:
+
+```powershell
+foreach ($cloud in 'aws', 'azure', 'combo') {
+  terraform "-chdir=infra/$cloud" providers lock -platform=linux_amd64 -platform=windows_amd64
+  if ($LASTEXITCODE -ne 0) { throw "Provider locking failed for $cloud" }
+}
+```
+
+Review and commit all three `infra/<cloud>/.terraform.lock.hcl` files, then run `npm run infra:check`. The deployment runner copies these locks into generated roots. If initialization succeeds but validation reports cached packages that do not match any lock-file checksum, check for missing platform content hashes and regenerate them with the command above. See HashiCorp's [provider locking documentation](https://developer.hashicorp.com/terraform/cli/commands/providers/lock).
+
 ## Configuration reference
 
 | Key                                            | Purpose                                                                                                           |
