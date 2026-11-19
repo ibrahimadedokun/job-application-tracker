@@ -44,7 +44,7 @@ Only authenticate to the clouds used by the selected target. Keep existing confi
 | `npm run deploy:publish -- --config deployment.json` | Build and retry publication against existing infrastructure; no apply                                     |
 | `npm run infra:output -- --config deployment.json`   | Public endpoints and deployment identifiers from state                                                    |
 
-Configuration selection order is explicit `--config`, then `DEPLOYMENT_CONFIG`, then `deployment.json`. The runner does not automatically approve applies. Model inference is not part of apply or publication. Azure-only publication creates a Foundry agent version; combo publication does not.
+Configuration selection order is explicit `--config`, then `DEPLOYMENT_CONFIG`, then `deployment.json`. The runner does not automatically approve applies. Model inference is not part of apply or publication. Both Azure targets use `infra/azure/publish.ps1`; Azure-only also provisions a Foundry agent version.
 
 ## Configuration reference
 
@@ -66,7 +66,7 @@ Configuration selection order is explicit `--config`, then `DEPLOYMENT_CONFIG`, 
 | `budget.amount`, `budget.email`                | Optional monthly alerts; empty email disables them. Azure billing currency and AWS USD; alerts are not caps       |
 | `backend`                                      | Local, S3 or AzureRM state backend; independent of hosting cloud                                                  |
 
-For inference profiles, keep `aws.account_id` and the source region consistent with the profile ARN. Regional and exact region-agnostic foundation-model ARNs can both be valid. Use the provider's returned values rather than inventing destinations. The combo guide covers GPT-specific validation and account access.
+For inference profiles, keep `aws.account_id` and the source region consistent with the profile ARN. Regional and exact region-agnostic foundation-model ARNs can both be valid. Use the provider's returned values rather than inventing destinations. The combo guide covers Claude Haiku 4.5 profile validation and account access.
 
 ## State and recovery
 
@@ -121,7 +121,7 @@ For an existing backend migration, back up state, configure the generated root's
 
 Open `web_url` from the outputs. Public health checks establish only frontend/configuration delivery and anonymous API rejection. Before using real documents, verify signed-in CRUD, export, sign-out, session expiry, two-user isolation and a consented fictional AI request. Record model access, latency and quota separately from infrastructure health.
 
-The current Bedrock blocker is documented in [validation](../docs/validation.md): agreement activation succeeded, but AWS still denies GPT-6 Sol to the account. Recreating infrastructure or widening runtime permissions does not establish provider eligibility.
+For Bedrock targets, verify model activation, profile permissions and actual inference through the runtime identity. See the [combo guide](combo/README.md#bedrock-model-access) and [validation status](../docs/validation.md).
 
 ## Teardown
 

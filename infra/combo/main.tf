@@ -162,7 +162,7 @@ resource "azapi_resource" "api" {
           AWS_ROLE_ARN                     = aws_iam_role.bedrock.arn
           AWS_TOKEN_SCOPE                  = "${azuread_application_identifier_uri.bedrock.identifier_uri}/.default"
           BEDROCK_MODEL_ID                 = var.model_id
-          BEDROCK_OPENAI_GPT               = tostring(local.openai_gpt)
+          BEDROCK_STRUCTURED_OUTPUT        = tostring(local.haiku_4_5)
         } : { name = key, value = value }]
       }
     }

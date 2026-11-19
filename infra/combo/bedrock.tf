@@ -1,11 +1,10 @@
 locals {
   # A dedicated v1 resource audience avoids v2 azp/aud claim remapping in STS.
-  issuer            = "https://sts.windows.net/${var.tenant_id}/"
-  issuer_key        = trimprefix(local.issuer, "https://")
-  model_resources   = concat([startswith(var.model_id, "arn:") ? var.model_id : "arn:aws:bedrock:${var.aws_region}::foundation-model/${var.model_id}"], var.extra_model_arns)
-  openai_gpt        = anytrue([for resource in local.model_resources : can(regex("[/.]openai\\.gpt-[0-9]", resource))])
-  project_resources = local.openai_gpt ? ["arn:aws:bedrock:${var.aws_region}:${var.account_id}:project/default"] : []
-  oidc_arn          = var.existing_oidc_provider_arn == "" ? aws_iam_openid_connect_provider.azure[0].arn : data.aws_iam_openid_connect_provider.existing[0].arn
+  issuer          = "https://sts.windows.net/${var.tenant_id}/"
+  issuer_key      = trimprefix(local.issuer, "https://")
+  model_resources = concat([startswith(var.model_id, "arn:") ? var.model_id : "arn:aws:bedrock:${var.aws_region}::foundation-model/${var.model_id}"], var.extra_model_arns)
+  haiku_4_5       = anytrue([for resource in local.model_resources : strcontains(resource, "anthropic.claude-haiku-4-5")])
+  oidc_arn        = var.existing_oidc_provider_arn == "" ? aws_iam_openid_connect_provider.azure[0].arn : data.aws_iam_openid_connect_provider.existing[0].arn
 }
 
 resource "azuread_application_registration" "bedrock" {
@@ -69,7 +68,7 @@ resource "aws_iam_role" "bedrock" {
 resource "aws_iam_role_policy" "bedrock" {
   role = aws_iam_role.bedrock.id
   policy = jsonencode({ Version = "2012-10-17", Statement = [{
-    Effect = "Allow", Action = ["bedrock:InvokeModel"], Resource = concat(local.model_resources, local.project_resources)
+    Effect = "Allow", Action = ["bedrock:InvokeModel"], Resource = local.model_resources
   }] })
   lifecycle {
     precondition {
@@ -77,8 +76,8 @@ resource "aws_iam_role_policy" "bedrock" {
       error_message = "Inference profiles require explicit destination foundation-model ARNs."
     }
     precondition {
-      condition     = !local.openai_gpt || can(regex(":(application-)?inference-profile/", var.model_id))
-      error_message = "OpenAI GPT models on Bedrock Runtime require a full cross-region inference-profile ARN and its destination model ARNs; a bare foundation-model ID cannot be invoked regionally."
+      condition     = !local.haiku_4_5 || can(regex(":(application-)?inference-profile/", var.model_id))
+      error_message = "Claude Haiku 4.5 on Bedrock Runtime requires a full cross-region inference-profile ARN and its destination model ARNs; a bare foundation-model ID cannot be invoked regionally."
     }
     precondition {
       condition     = !can(regex(":(application-)?inference-profile/", var.model_id)) || startswith(var.model_id, "arn:aws:bedrock:${var.aws_region}:${var.account_id}:")

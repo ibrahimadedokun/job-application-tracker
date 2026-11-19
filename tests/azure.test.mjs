@@ -4,7 +4,7 @@ import { generateKeyPair, SignJWT } from "jose";
 import { createAuthenticate } from "../infra/azure/api/auth.mjs";
 import { createAzureStore } from "../infra/azure/api/store.mjs";
 import { createFoundryGenerator } from "../infra/azure/api/agent.mjs";
-import { createAzureHandler } from "../infra/azure/api/handler.mjs";
+import { createAzureHttpHandler } from "../infra/azure/api/http.mjs";
 import { createApi } from "../server/api.mjs";
 import { makeJob } from "../server/core.mjs";
 
@@ -177,7 +177,7 @@ test("Azure Blob storage isolates users, lists records, guards creates and rejec
 });
 
 test("Azure HTTP adapter rejects spoofed identities, malformed JSON and oversized streams", async () => {
-  const handler = createAzureHandler({
+  const handler = createAzureHttpHandler({
     authenticate: async (header) =>
       header === "Bearer valid" ? "alice" : null,
     api: createApi({

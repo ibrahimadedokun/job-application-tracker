@@ -20,8 +20,6 @@ provider "azapi" {
   tenant_id       = var.tenant_id
 }
 provider "azuread" { tenant_id = var.tenant_id }
-data "azuread_client_config" "current" {}
-
 provider "aws" {
   region              = var.aws_region
   allowed_account_ids = [var.account_id]

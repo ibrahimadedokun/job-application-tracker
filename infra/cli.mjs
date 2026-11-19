@@ -71,7 +71,7 @@ if (action === "check") {
   node(["infra/azure/build.mjs"]);
   node(["infra/azure/verify.mjs"]);
   node(["infra/azure/build.mjs", "--combo", "--output", ".local/check/combo"]);
-  node(["infra/combo/verify.mjs", "--output", ".local/check/combo"]);
+  node(["infra/azure/verify.mjs", "--combo", "--output", ".local/check/combo"]);
   await buildAws(resolve(root, ".local/check/aws"));
   console.log(
     "All three Terraform targets validated with mocked providers; no cloud resources created.",
@@ -220,7 +220,7 @@ if (config.cloud === "aws") {
   run("pwsh", [
     "-NoProfile",
     "-File",
-    `infra/${config.cloud}/publish.ps1`,
+    "infra/azure/publish.ps1",
     "-OutputsFile",
     outputsFile,
     "-Artifacts",

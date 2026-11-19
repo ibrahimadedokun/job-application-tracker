@@ -20,7 +20,7 @@ The role permits table operations, operational logging and invocation of configu
 
 Top-level `region` is the AWS hosting/model source region. Set `aws.account_id` and an enabled Converse model in `aws.model_id`. Full inference-profile ARNs require exact foundation-model resources in `aws.extra_model_arns`; global profiles may return region-agnostic ARNs. Profiles affect processing residency. Account activation, authorization, quotas and actual model availability must all be verified.
 
-The default example is a configuration example, not a model-access guarantee. The combo target has additional GPT-specific project permissions and profile validation; do not assume that its live results establish compatibility for every model on AWS-only.
+The default example is a configuration example, not a model-access guarantee. Claude Haiku 4.5 uses an EU cross-region profile and explicit destination-model permissions. Confirm those resources with Bedrock before applying; live results for combo do not establish compatibility for every model on AWS-only.
 
 The deployment caller needs the relevant service, IAM/pass-role, static upload and invalidation permissions. Use an AWS profile/SSO session and the expected account. Follow the shared plan/apply commands; no separate infrastructure bootstrap is required.
 

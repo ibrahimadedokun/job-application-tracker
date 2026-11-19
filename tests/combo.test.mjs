@@ -7,38 +7,32 @@ import {
 } from "../infra/config.mjs";
 import { createFederatedCredentials } from "../infra/combo/api/credentials.mjs";
 import { createBedrockGenerator } from "../server/bedrock.mjs";
+import { promptFor } from "../server/core.mjs";
 import { regionValidationTemplate } from "../infra/combo/regions.mjs";
 
-test("combo accepts GPT-6 Sol profiles and rejects regional or mismatched profile configuration", async () => {
+test("combo accepts Claude Haiku 4.5 profiles and rejects regional or mismatched profile configuration", async () => {
   const config = await readConfiguration(
     "infra/environments/combo.dev.example.json",
   );
   const model =
-    "arn:aws:bedrock:eu-west-2:123456789012:inference-profile/global.openai.gpt-6-sol";
+    "arn:aws:bedrock:eu-west-2:123456789012:inference-profile/eu.anthropic.claude-haiku-4-5-20251001-v1:0";
   const aws = {
     ...config.aws,
     account_id: "123456789012",
     model_id: model,
     extra_model_arns: [
-      "arn:aws:bedrock:::foundation-model/openai.gpt-6-sol",
-      "arn:aws:bedrock:eu-west-2::foundation-model/openai.gpt-6-sol",
+      "arn:aws:bedrock:eu-west-1::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0",
+      "arn:aws:bedrock:eu-west-2::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0",
     ],
   };
-  assert.equal(
-    parseConfiguration({
-      ...config,
-      aws: { ...config.aws, model_id: "openai.gpt-oss-120b-1:0" },
-    }).aws.model_id,
-    "openai.gpt-oss-120b-1:0",
-  );
   assert.equal(
     terraformVariables(parseConfiguration({ ...config, aws }), "/tmp/artifacts")
       .model_id,
     model,
   );
   for (const model_id of [
-    "openai.gpt-6-sol",
-    "arn:aws:bedrock:eu-west-2::foundation-model/openai.gpt-6-sol",
+    "anthropic.claude-haiku-4-5-20251001-v1:0",
+    "arn:aws:bedrock:eu-west-2::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0",
     model.replace("eu-west-2", "us-east-1"),
     model.replace("123456789012", "999999999999"),
   ]) {
@@ -54,8 +48,8 @@ test("combo accepts GPT-6 Sol profiles and rejects regional or mismatched profil
   );
   for (const invalid of [
     "arn:aws:bedrock:::foundation-model/*",
-    "arn:aws:bedrock:::inference-profile/global.openai.gpt-6-sol",
-    "arn:aws:bedrock:::foundation-model/openai.gpt-6-sol/invalid",
+    "arn:aws:bedrock:::inference-profile/eu.anthropic.claude-haiku-4-5-20251001-v1:0",
+    "arn:aws:bedrock:::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0/invalid",
   ]) {
     assert.throws(
       () =>
@@ -68,7 +62,7 @@ test("combo accepts GPT-6 Sol profiles and rejects regional or mismatched profil
   }
 });
 
-test("Bedrock requests support GPT reasoning profiles and preserve Nova sampling", async () => {
+test("Bedrock requests use Claude Haiku 4.5 sampling without provider-specific reasoning fields", async () => {
   const output = {
     cv: "A factual revised CV with accessible JavaScript experience.",
     coverLetter: "A factual cover letter for this engineering opportunity.",
@@ -78,15 +72,14 @@ test("Bedrock requests support GPT reasoning profiles and preserve Nova sampling
   for (const options of [
     {
       modelId:
-        "arn:aws:bedrock:eu-west-2:123456789012:inference-profile/global.openai.gpt-6-sol",
+        "arn:aws:bedrock:eu-west-2:123456789012:inference-profile/eu.anthropic.claude-haiku-4-5-20251001-v1:0",
     },
     {
       modelId:
         "arn:aws:bedrock:eu-west-2:123456789012:application-inference-profile/custom-id",
-      openaiGpt: true,
+      structuredOutput: true,
     },
-    { modelId: "amazon.nova-micro-v1:0", openaiGpt: false },
-    { modelId: "openai.gpt-oss-120b-1:0" },
+    { modelId: "amazon.nova-micro-v1:0" },
   ]) {
     let captured;
     const generate = createBedrockGenerator({
@@ -120,15 +113,33 @@ test("Bedrock requests support GPT reasoning profiles and preserve Nova sampling
       output,
     );
     assert.equal(captured.modelId, options.modelId);
+    assert.deepEqual(
+      captured.system,
+      promptFor({}, {}).system,
+      "The model request must include the career editor system prompt",
+    );
     assert.equal(captured.inferenceConfig.maxTokens, 7000);
-    if (options.openaiGpt !== false && !options.modelId.includes("gpt-oss")) {
-      assert.equal("temperature" in captured.inferenceConfig, false);
-      assert.deepEqual(captured.additionalModelRequestFields, {
-        reasoning: { effort: "low" },
-      });
+    assert.equal(captured.inferenceConfig.temperature, 0.35);
+    assert.equal(captured.additionalModelRequestFields, undefined);
+    if (
+      options.structuredOutput ||
+      options.modelId.includes("claude-haiku-4-5")
+    ) {
+      assert.equal(captured.outputConfig.textFormat.type, "json_schema");
+      const schema = JSON.parse(
+        captured.outputConfig.textFormat.structure.jsonSchema.schema,
+      );
+      assert.deepEqual(schema.required, [
+        "cv",
+        "coverLetter",
+        "changes",
+        "missingKeywords",
+      ]);
+      assert.equal(schema.additionalProperties, false);
+      assert.equal(schema.properties.cv.type, "string");
+      assert.equal(schema.properties.changes.items.type, "string");
     } else {
-      assert.equal(captured.inferenceConfig.temperature, 0.35);
-      assert.equal(captured.additionalModelRequestFields, undefined);
+      assert.equal(captured.outputConfig, undefined);
     }
   }
 });

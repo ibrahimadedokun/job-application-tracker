@@ -1,14 +1,13 @@
 import { createStore } from "./store.mjs";
 import { createApi as createApplication } from "./application.mjs";
 import { createBedrockGenerator } from "./bedrock.mjs";
-export { createBedrockGenerator } from "./bedrock.mjs";
 export function createApi({
   store = createStore(),
   generate = createBedrockGenerator(),
 } = {}) {
   return createApplication({ store, generate });
 }
-export const api = createApi();
+const api = createApi();
 export async function handler(event) {
   let body;
   try {

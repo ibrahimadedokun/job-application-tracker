@@ -1,10 +1,10 @@
 import { readFile } from "node:fs/promises";
 import { z } from "zod";
-import { deploymentConfig } from "./aws/config.mjs";
 
 const slug = z.string().regex(/^[a-z][a-z0-9-]{1,15}$/);
 const guid = z.string().uuid();
-export const configurationSchema = z
+const awsRegion = z.string().regex(/^[a-z]{2}(?:-[a-z]+)+-\d+$/);
+const configurationSchema = z
   .object({
     cloud: z.enum(["aws", "azure", "combo"]),
     environment: slug,
@@ -19,14 +19,14 @@ export const configurationSchema = z
     aws: z
       .object({
         account_id: z.string().regex(/^\d{12}$/),
-        region: z
-          .string()
-          .regex(/^[a-z]{2}(?:-[a-z]+)+-\d+$/)
-          .optional(),
+        region: awsRegion.optional(),
         existing_oidc_provider_arn: z.string().default(""),
         model_id: z.string().min(1),
         extra_model_arns: z.array(z.string()).default([]),
-        cognito_domain_prefix: z.string().default(""),
+        cognito_domain_prefix: z
+          .string()
+          .regex(/^$|^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/)
+          .default(""),
       })
       .optional(),
     azure: z
@@ -91,36 +91,52 @@ export const configurationSchema = z
 
 export function parseConfiguration(input) {
   const config = configurationSchema.parse(input);
-  if (["aws", "combo"].includes(config.cloud))
-    deploymentConfig(
-      {
-        AWS_ACCOUNT_ID: config.aws.account_id,
-        AWS_REGION:
-          config.cloud === "combo" ? config.aws.region : config.region,
-        BEDROCK_MODEL_ID: config.aws.model_id,
-        BEDROCK_EXTRA_MODEL_ARNS: config.aws.extra_model_arns.join(","),
-        COGNITO_DOMAIN_PREFIX: config.aws.cognito_domain_prefix,
-      },
-      { deployment: true },
-    );
-  if (config.cloud === "combo") {
+  if (config.cloud !== "azure") {
     const {
       model_id: model,
-      extra_model_arns: extra,
       account_id: account,
-      region,
+      extra_model_arns: models,
     } = config.aws;
-    const profile = /:(?:application-)?inference-profile\//.test(model);
-    const openaiGpt = [model, ...extra].some((value) =>
-      /(?:^|[/.])openai\.gpt-[0-9]/.test(value),
+    const region = awsRegion.parse(
+      config.cloud === "combo" ? config.aws.region : config.region,
     );
-    if (openaiGpt && !profile)
+    const modelArn =
+      /^arn:aws(?:-us-gov|-cn)?:bedrock:[a-z0-9-]+:(?:\d{12})?:(?:foundation-model|inference-profile|application-inference-profile)\/[A-Za-z0-9._:-]+$/;
+    const foundationModelArn =
+      /^arn:aws(?:-us-gov|-cn)?:bedrock:(?:[a-z0-9-]+:(?:\d{12})?|:):foundation-model\/[A-Za-z0-9._:-]+$/;
+    if (
+      !(model.startsWith("arn:")
+        ? modelArn.test(model)
+        : /^[A-Za-z0-9._:-]+$/.test(model))
+    )
       throw new Error(
-        "OpenAI GPT on Bedrock Runtime requires a full cross-region inference-profile ARN and destination model ARNs.",
+        "aws.model_id must be an explicit model ID or Bedrock model/profile ARN without wildcards.",
       );
-    if (profile && !model.startsWith(`arn:aws:bedrock:${region}:${account}:`))
+    if (models.some((arn) => !foundationModelArn.test(arn)))
       throw new Error(
-        `The Bedrock inference profile must match aws.account_id (${account}) and aws.region (${region}). Received: ${model}. Expected prefix: arn:aws:bedrock:${region}:${account}:`,
+        "aws.extra_model_arns must contain explicit foundation-model ARNs without wildcards.",
+      );
+    const profile = /:(?:application-)?inference-profile\//.test(model);
+    if (profile && !models.length)
+      throw new Error(
+        "Inference profiles require destination foundation-model ARNs in aws.extra_model_arns.",
+      );
+    if (
+      /^(?:us|eu|apac|global)\./.test(model) ||
+      ([model, ...models].some((value) =>
+        value.includes("anthropic.claude-haiku-4-5"),
+      ) &&
+        !profile)
+    )
+      throw new Error(
+        "Use a full inference-profile ARN and destination model ARNs for cross-region models, including Claude Haiku 4.5.",
+      );
+    if (
+      profile &&
+      (model.split(":")[3] !== region || model.split(":")[4] !== account)
+    )
+      throw new Error(
+        "The Bedrock inference profile must match the configured AWS account and source region.",
       );
   }
   return config;

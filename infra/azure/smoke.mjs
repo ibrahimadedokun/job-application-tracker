@@ -21,7 +21,7 @@ console.log(
 const token = process.env.AZURE_SMOKE_ACCESS_TOKEN;
 if (!token) {
   console.log(
-    "Set AZURE_SMOKE_ACCESS_TOKEN to an API access token from your signed-in browser session for CRUD checks. Add --tailor for one billable AI call.",
+    "Set AZURE_SMOKE_ACCESS_TOKEN to an API access token from your signed-in browser session for CRUD checks. Add --tailor for billable AI generation.",
   );
   process.exit(0);
 }

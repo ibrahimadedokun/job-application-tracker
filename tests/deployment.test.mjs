@@ -1,32 +1,42 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { deploymentConfig } from "../infra/aws/config.mjs";
+import { readConfiguration, parseConfiguration } from "../infra/config.mjs";
 import { createStore } from "../server/store.mjs";
 import { makeJob } from "../server/core.mjs";
-import { createApi, createBedrockGenerator } from "../server/api.mjs";
+import { createApi } from "../server/api.mjs";
+import { createBedrockGenerator } from "../server/bedrock.mjs";
 
-test("deployment rejects missing or unsafe account, model and budget configuration", () => {
-  const valid = {
-    AWS_ACCOUNT_ID: "123456789012",
-    BEDROCK_MODEL_ID: "test.model-v1",
-  };
-  assert.equal(
-    deploymentConfig(valid, { deployment: true }).region,
-    "eu-west-2",
+test("deployment rejects missing or unsafe account, model and budget configuration", async () => {
+  const example = await readConfiguration(
+    "infra/environments/aws.dev.example.json",
   );
-  for (const env of [
+  const valid = {
+    ...example,
+    aws: { ...example.aws, model_id: "test.model-v1", extra_model_arns: [] },
+  };
+  assert.equal(parseConfiguration(valid).region, "eu-west-2");
+  for (const input of [
     {},
-    { ...valid, AWS_ACCOUNT_ID: "invalid" },
-    { ...valid, BEDROCK_MODEL_ID: "" },
-    { ...valid, BEDROCK_MODEL_ID: "*" },
-    { ...valid, BEDROCK_MODEL_ID: "eu.test.model-v1" },
+    { ...valid, region: "eastus2" },
+    ...["", "*", "eu.test.model-v1"].map((model_id) => ({
+      ...valid,
+      aws: { ...valid.aws, model_id },
+    })),
+    { ...valid, aws: { ...valid.aws, account_id: "invalid" } },
     {
       ...valid,
-      BEDROCK_EXTRA_MODEL_ARNS: "arn:aws:bedrock:*::foundation-model/*",
+      aws: { ...valid.aws, cognito_domain_prefix: "Invalid prefix" },
     },
-    { ...valid, BUDGET_EMAIL: "user@example.com", MONTHLY_BUDGET_USD: "NaN" },
+    {
+      ...valid,
+      aws: {
+        ...valid.aws,
+        extra_model_arns: ["arn:aws:bedrock:*::foundation-model/*"],
+      },
+    },
+    { ...valid, budget: { email: "user@example.com", amount: NaN } },
   ])
-    assert.throws(() => deploymentConfig(env, { deployment: true }));
+    assert.throws(() => parseConfiguration(input));
 });
 
 test("DynamoDB lists every page consistently without exposing owner keys", async () => {

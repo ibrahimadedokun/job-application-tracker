@@ -41,14 +41,14 @@ All targets use Terraform and the same deployment runner. Each target has separa
 | `aws`   | CloudFront/S3, Lambda, DynamoDB                                  | Cognito  | AWS Bedrock          | [AWS](infra/aws/README.md)           |
 | `azure` | Azure Free Static Web Apps, Flex Functions, private Blob Storage | Entra    | Foundry prompt agent | [Azure](infra/azure/README.md)       |
 
-The current live installation uses `combo`, with Azure resources in **East US 2** and Bedrock requests originating in **eu-west-2**. GPT-6 Sol inference is currently blocked by AWS account eligibility, despite an active model agreement. The infrastructure and public site checks passed; this does not establish working AI generation. See the dated [validation record](docs/validation.md).
+The default combo configuration uses Azure **East US 2** and **Claude Haiku 4.5** through Bedrock's EU inference profile from **eu-west-2**. See [validation status](docs/validation.md) for completed checks and outstanding live acceptance tests.
 
 Start with the [deployment guide](infra/README.md). Do not overwrite an existing `deployment.json` or apply a new installation over existing resources.
 
 ## Documentation
 
 - [Current system design](docs/architecture.md): components, trust boundaries, data lifecycle, decisions, trade-offs and limitations.
-- [Future system design](docs/future-system-design.md): proposed security, latency, reliability and efficiency improvements, capacity assumptions, cost envelope and migration plan.
+- [Future improvements](docs/future-system-design.md): prioritized reliability, security and storage work, with migration considerations.
 - [Deployment and state management](infra/README.md): prerequisites, commands, configuration, recovery and teardown.
 - [Validation and operational readiness](docs/validation.md): observed results and outstanding checks.
 
@@ -74,6 +74,4 @@ Browser tests use fictional data and demo AI. Stop development servers on ports 
 | `server/` | Shared validation, application routes, Bedrock generator and AWS/local adapters |
 | `infra/`  | Deployment runner, configuration, three Terraform targets and publishing        |
 | `tests/`  | Application, security, document and browser tests                               |
-| `docs/`   | Current/future system designs and validation evidence                           |
-
-Email ingestion, job scraping, employer submission, account-wide self-service erasure and production abuse quotas are not implemented.
+| `docs/`   | Architecture, future improvements and validation status                         |

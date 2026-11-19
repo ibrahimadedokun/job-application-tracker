@@ -1,76 +1,75 @@
 # Azure hosting with AWS Bedrock
 
-This is the current live deployment target. Azure hosts the UI, API and private records; application code invokes Bedrock through temporary AWS credentials. See the [current system design](../../docs/architecture.md) for decisions and trust boundaries, and [deployment operations](../README.md) for common commands/state management.
+Azure hosts the frontend, API and private records. The Function invokes Bedrock using federated temporary AWS credentials. Follow the [shared deployment workflow](../README.md); see [architecture](../../docs/architecture.md) and [validation status](../../docs/validation.md) for implementation and live-check coverage.
 
-## Defaults and current installation
+## Defaults
 
-| Setting                     | Source default                                      | Current live configuration         |
-| --------------------------- | --------------------------------------------------- | ---------------------------------- |
-| Azure hosting/storage/group | `eastus2`                                           | East US 2                          |
-| Static-app region           | `azure.static_web_region: eastus2`                  | East US 2                          |
-| Compute                     | Flex Consumption, Node.js 22, 512 MB, scale to zero | Same                               |
-| Frontend/storage            | Free Static Web Apps; Standard LRS private blobs    | Same                               |
-| Bedrock source              | `aws.region: eu-west-2` in example                  | eu-west-2                          |
-| Model                       | Nova Micro example                                  | Global GPT-6 Sol inference profile |
-| Login                       | Single-tenant Entra PKCE and API scope              | Same                               |
-
-The current GPT-6 Sol agreement is active, but inference remains denied by AWS account eligibility. Infrastructure, deployment and public HTTP checks passed; the AI feature is not yet validated as working. See the dated [validation record](../../docs/validation.md).
-
-There is one selected resource/source region per cloud. Global inference can route elsewhere. Free hosting and consumption pricing do not guarantee free operation: storage, internet transfer, inference and usage beyond grants can incur charges. The optional Azure group and AWS account alerts use the configured amount in their respective currencies; neither is a cap. The AWS alert covers account spending beyond this project too.
+| Setting               | Configuration                                       |
+| --------------------- | --------------------------------------------------- |
+| Azure backend/storage | East US 2 (`eastus2`)                               |
+| Static-app region     | `azure.static_web_region: eastus2`                  |
+| Compute               | Flex Consumption, Node.js 22, 512 MB, scale to zero |
+| Frontend/storage      | Free Static Web Apps; private Standard LRS blobs    |
+| Login                 | Single-tenant Entra, PKCE and delegated API scope   |
+| Bedrock source        | `aws.region: eu-west-2`                             |
+| Model                 | Claude Haiku 4.5 EU inference profile               |
 
 ## Configure
 
-For a new installation, copy [combo.dev.example.json](../environments/combo.dev.example.json) and edit it using the [shared workflow](../README.md#configure-and-deploy). Retain existing configuration and state for updates.
+For a new installation, copy [combo.dev.example.json](../environments/combo.dev.example.json). Keep existing configuration and state when updating.
 
-- Top-level `region` selects the Azure backend; `aws.region` selects Bedrock/STS independently.
-- Both `azure` and `aws` account sections are required; Foundry model settings are ignored.
-- Keep `azure.budget_start_date` stable. Additional frontend origins belong in `azure.extra_origins`.
-- Leave `aws.existing_oidc_provider_arn` empty unless deliberately reusing a provider managed elsewhere.
+- Top-level `region` selects the Azure backend; `aws.region` selects Bedrock and STS independently.
+- Both account sections are required. Foundry settings are unused for combo.
+- Keep `azure.budget_start_date` stable; add frontend origins through `azure.extra_origins`.
+- Leave `aws.existing_oidc_provider_arn` empty unless reusing an externally managed provider.
+- Set `azure.resource_group_region` only when deliberately retaining an existing group's metadata location during recovery. Region changes can replace resources and require a reviewed plan.
 
-The caller needs Azure/Entra resource and role-assignment permissions plus AWS IAM and optional budget permissions. Federation requires directory permission to assign an application role to the managed identity. Runtime identities receive storage/model invocation permissions, not model-subscription privileges.
+Deployment requires Azure resource/RBAC permissions, Entra application and app-role assignment rights, and AWS IAM permissions. Runtime roles receive storage/model access, not model-subscription privileges.
 
-Combo plan/apply checks Flex Consumption and the resource-provider region lists. For an existing resource group it also performs provider-level ARM validation of identity, storage, FC1 plan and Free static-app resources. For a new group, final subscription eligibility is determined when Azure provisions resources. Capacity and policy can change after validation. [Microsoft describes the West Europe restriction](https://learn.microsoft.com/en-us/azure/azure-resource-manager/troubleshooting/error-region-access-policy).
-
-`azure.resource_group_region` is only needed when deliberately retaining an existing group's metadata location during recovery. Omit it for a clean installation so the group follows `region`. Moving the metadata location can replace the group; changing workload locations can replace those resources too. Follow the shared recovery procedure and inspect the plan rather than bypassing the target guard.
+Combo plan/apply checks supported service regions and, for existing resource groups, performs provider-level ARM validation. Final subscription eligibility and capacity are determined by Azure during provisioning.
 
 ## Bedrock model access
 
-There are separate readiness gates: IAM permission, model agreement/entitlement, regional availability, account-specific eligibility and usable quota. A successful apply, an active inference profile, an IAM simulation or even all availability fields reporting `AVAILABLE` does not prove actual inference access. AWS may require [additional account-level approval](https://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html).
+Model readiness requires account eligibility, activation, regional availability, IAM access and quota. Infrastructure provisioning and availability metadata do not prove successful inference. Complete Anthropic's first-time-use requirements and model activation before testing the runtime path.
 
-For GPT-6 Sol, Bedrock Runtime uses a cross-region profile; the bare regional foundation-model ID is not valid for this path. Retrieve the actual profile and model resources:
+Claude Haiku 4.5 uses a cross-region inference profile. Retrieve its actual resources:
 
 ```powershell
-aws bedrock get-inference-profile --region eu-west-2 --inference-profile-identifier global.openai.gpt-6-sol --query '{profileArn:inferenceProfileArn,modelArns:models[].modelArn,status:status}' --output json
-aws bedrock get-foundation-model-availability --region eu-west-2 --model-id openai.gpt-6-sol --output json
+aws bedrock get-inference-profile --region eu-west-2 --inference-profile-identifier eu.anthropic.claude-haiku-4-5-20251001-v1:0 --query '{profileArn:inferenceProfileArn,modelArns:models[].modelArn,status:status}' --output json
+aws bedrock get-foundation-model-availability --region eu-west-2 --model-id anthropic.claude-haiku-4-5-20251001-v1:0 --output json
 ```
 
-Set `aws.model_id` to the returned full profile ARN and `aws.extra_model_arns` to all returned foundation-model ARNs. The profile must match the configured account/source region. Preserve exact region-agnostic values such as `arn:aws:bedrock:::foundation-model/openai.gpt-6-sol`; do not insert a region or wildcard. Review profile routing and organizational region policies when it changes.
+Set `aws.model_id` to the full profile ARN and `aws.extra_model_arns` to every returned destination-model ARN. The profile must match the configured account/source region. Verify the example's destination list for your account and review cross-region processing requirements. IAM grants invocation only on these explicit resources.
 
-The target adds the exact account/source-region `project/default` invocation resource for numbered OpenAI GPT models. Project ARNs do not belong in `extra_model_arns`. Detection also examines destination ARNs for opaque application profiles. GPT requests omit temperature and use low reasoning effort; regional GPT OSS models retain their separate behavior. See [AWS model documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-sol.html) for current capabilities and rates.
+## Prompt and response handling
 
-Model agreements are an operator step that can accept provider terms and enable billing. They are not automatically accepted by Terraform or publishing. Once prerequisites are satisfied, authorize a small fictional test using the same runtime identity/path; an administrator's successful model call alone would not prove federation works. If AWS says the model is unavailable to the account, request access through AWS rather than broadening the runtime role or rebuilding resources.
+The [career-editor prompt](../../server/core.mjs) is sent in Converse's `system` field, separately from untrusted job/document text. It requires factual drafts and JSON containing `cv`, `coverLetter`, `changes` and `missingKeywords`. Edit the source prompt and republish to change these instructions.
+
+Haiku requests use a JSON Schema through `outputConfig.textFormat`; `BEDROCK_STRUCTURED_OUTPUT` also enables it for opaque application profiles. Application validation enforces document and metadata bounds. CV-only input generates a companion cover letter.
+
+The adapter uses a 7,000-token ceiling, temperature 0.35 and a shared 55-second deadline. It makes at most one corrective call for invalid completed output, with at least five seconds remaining. Refusals, truncation, provider errors and timeouts are not retried. Invalid results are never saved. Validation warnings exclude document text and credentials.
+
+The first use of a schema can exceed this deadline because Bedrock compiles its grammar. The corrective path does not extend the deadline or retry timeouts. See [AWS structured-output guidance](https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html).
 
 ## Federation and OIDC reuse
 
-The dedicated Entra federation registration emits v1 app-only tokens. Its application role is assigned to the Function's managed identity. AWS trusts the tenant's `sts.windows.net` issuer, exact audience and identity principal as subject. The browser/API registration separately uses v2 delegated tokens. The [AWS federation pattern](https://aws.amazon.com/blogs/security/how-to-access-aws-resources-from-microsoft-entra-id-tenants-using-aws-security-token-service/) explains this exchange.
+A dedicated Entra registration emits v1 app-only tokens. Its application role is assigned to the Function's managed identity. AWS restricts trust to the tenant issuer, exact audience and managed identity subject. The browser registration separately uses v2 delegated tokens. The credential provider coalesces refreshes and caches temporary STS credentials server-side.
 
-The credential provider uses Azure managed identity, coalesces concurrent refreshes, caches temporary STS credentials and refreshes five minutes before expiry. Tokens and credentials remain server-side; neither appears in frontend configuration.
-
-AWS allows only one IAM OIDC provider for an issuer URL per account. To find an existing one:
+AWS permits one IAM OIDC provider per issuer URL in an account. Find an existing provider with:
 
 ```powershell
 aws iam list-open-id-connect-providers --query 'OpenIDConnectProviderList[].Arn' --output table
 ```
 
-Match the tenant issuer, then inspect it using `aws iam get-open-id-connect-provider --open-id-connect-provider-arn YOUR-ARN`. Reuse requires its owner to add this installation's `api://<federation-client-id>` audience. The audience is available as `deployment.federation_audience` after apply. A first setup against an externally owned provider may need staged registration creation before the owner can add that audience. Never give two Terraform states ownership of the same provider. If this target already owns the provider, keep the reuse field empty.
+Inspect the matching provider using `aws iam get-open-id-connect-provider --open-id-connect-provider-arn YOUR-ARN`. Reuse requires its owner to add this installation's federation audience, exposed as `deployment.federation_audience`. A first setup may require staged registration creation before that audience can be added. Keep one Terraform owner for the provider; leave the reuse field empty if this target already owns it.
 
 ## Storage and publication
 
-Azure creates `blobServices/default` with the storage account. This target updates it using `azapi_update_resource.blobs`; no manual import is required on a fresh deployment. Older installations that tracked that child under `azapi_resource.blobs` need an explicit state transition before adopting the new type.
+Records and Function packages use separate private containers. Seven-day soft deletion and the account lock are enabled; versioning is disabled. The template updates Azure's existing `blobServices/default` singleton through `azapi_update_resource.blobs`. An older state using `azapi_resource.blobs` needs an explicit state transition.
 
-Private records and Function packages use separate containers in one account. Seven-day soft deletion and the account lock are enabled; versioning is disabled. These are not complete backup/overwrite-recovery controls.
+The shared Azure publisher builds and verifies the combo package, uploads the Function ZIP and publishes the static frontend. It does not provision a Foundry agent or invoke a model. Retry failed publication with `deploy:publish` using the same configuration and state.
 
-After apply, the publisher builds the Entra/Blob/Bedrock Function package, uploads its ZIP and deploys the static frontend with public runtime configuration. It uses pinned SWA CLI and a process-local deployment token. It does not provision a Foundry agent or invoke a model. Retry failed publication with `deploy:publish` rather than recreating infrastructure.
+Free hosting does not guarantee free operation. Storage, traffic and inference, including corrective calls, can incur charges. Optional Azure-group and AWS-account budget alerts are not spending caps.
 
 ## Verification and troubleshooting
 
@@ -78,17 +77,17 @@ After apply, the publisher builds the Entra/Blob/Bedrock Function package, uploa
 node infra/azure/smoke.mjs https://YOUR-SITE.azurestaticapps.net
 ```
 
-The public check verifies runtime configuration and HTTP 401 for anonymous API calls. With a locally set `AZURE_SMOKE_ACCESS_TOKEN`, the script creates/updates/exports/deletes a fictional record. `--tailor` additionally makes one billable model request. Clear the token afterwards. Test a second user's isolation and browser sign-in/sign-out separately.
+The public check verifies frontend configuration and anonymous API rejection. With `AZURE_SMOKE_ACCESS_TOKEN` set locally, it also checks fictional CRUD/export and deletes the fixture. `--tailor` requests billable document generation. Clear the token afterwards. Browser sign-in/out and two-user isolation need separate checks.
 
-| Symptom                       | Check                                                                                             |
-| ----------------------------- | ------------------------------------------------------------------------------------------------- |
-| API 401                       | Tenant, audience, calling client, delegated scope and token expiry                                |
-| Credential/federation failure | Managed identity assignment, federation app role, v1 issuer, exact audience/subject and STS trust |
-| Bedrock 503/access denied     | Provider agreement, account eligibility, actual model resources and organizational restrictions   |
-| AI 429                        | Model quota, throttling and concurrency; avoid repeated generation clicks                         |
-| AI 504                        | Model/input latency and deadline; a timed-out request may still be billed                         |
-| Storage 403                   | Identity role at the correct account scope and permission propagation                             |
-| Existing blob-service error   | Confirm use of the update resource; reconcile any older state ownership                           |
-| Region/target mismatch        | Inspect configuration and existing state; use reviewed migration, not state deletion              |
+| Symptom                   | Check                                                                         |
+| ------------------------- | ----------------------------------------------------------------------------- |
+| API 401                   | Tenant, audience, calling client, delegated scope and expiry                  |
+| Federation failure        | Managed identity assignment, app role, issuer, audience/subject and STS trust |
+| Bedrock 503/access denied | Activation, account eligibility, model permissions and organization policies  |
+| AI 429                    | Model quota and concurrency                                                   |
+| AI 502 / invalid document | Safe validation warnings: request ID, JSON category or affected fields        |
+| AI 504                    | Model/input latency and the shared deadline                                   |
+| Storage 403               | Managed identity role and permission propagation                              |
+| Target/region mismatch    | Existing configuration and state; use the shared recovery procedure           |
 
-Use the [shared teardown procedure](../README.md#teardown) for removal. Storage and browser identity protections remain enabled. Check shared OIDC consumers and global Entra/AWS resources as well as the Azure resource group.
+Use the [shared teardown procedure](../README.md#teardown) for removal. Review retained storage, identities and shared OIDC consumers before deleting resources.

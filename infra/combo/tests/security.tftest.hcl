@@ -61,10 +61,6 @@ run "cheap_private_managed_defaults" {
     error_message = "Grant only Bedrock invocation on the selected models."
   }
   assert {
-    condition     = length(local.project_resources) == 0
-    error_message = "Nova must not receive OpenAI project permissions."
-  }
-  assert {
     condition     = azapi_resource.storage.body.sku.name == "Standard_LRS" && !azapi_resource.storage.body.properties.allowBlobPublicAccess && !azapi_resource.storage.body.properties.allowSharedKeyAccess && azapi_resource.storage.body.properties.supportsHttpsTrafficOnly
     error_message = "Use private LRS storage with HTTPS and no shared keys."
   }
@@ -99,55 +95,41 @@ run "retain_existing_resource_group_location" {
   }
 }
 
-run "gpt6_sol_scoped_project_and_models" {
+run "haiku_4_5_scoped_profile_and_models" {
   command = plan
   variables {
-    model_id         = "arn:aws:bedrock:eu-west-2:123456789012:inference-profile/global.openai.gpt-6-sol"
-    extra_model_arns = ["arn:aws:bedrock:::foundation-model/openai.gpt-6-sol", "arn:aws:bedrock:eu-west-2::foundation-model/openai.gpt-6-sol"]
+    model_id         = "arn:aws:bedrock:eu-west-2:123456789012:inference-profile/eu.anthropic.claude-haiku-4-5-20251001-v1:0"
+    extra_model_arns = ["arn:aws:bedrock:eu-west-1::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0", "arn:aws:bedrock:eu-west-2::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0"]
   }
   assert {
-    condition     = toset(jsondecode(aws_iam_role_policy.bedrock.policy).Statement[0].Resource) == toset(concat([var.model_id], var.extra_model_arns, ["arn:aws:bedrock:eu-west-2:123456789012:project/default"]))
-    error_message = "GPT must receive exactly the selected profile, destination models and this account/region's default project."
-  }
-  assert {
-    condition     = [for setting in azapi_resource.api.body.properties.siteConfig.appSettings : setting.value if setting.name == "BEDROCK_OPENAI_GPT"] == ["true"]
-    error_message = "The runtime must receive the GPT request compatibility setting."
+    condition     = toset(jsondecode(aws_iam_role_policy.bedrock.policy).Statement[0].Resource) == toset(concat([var.model_id], var.extra_model_arns))
+    error_message = "Claude must receive exactly the selected profile and destination models."
   }
 }
 
-run "gpt_application_profile_uses_destination_metadata" {
+run "haiku_application_profile_uses_destination_metadata" {
   command = plan
   variables {
     model_id         = "arn:aws:bedrock:eu-west-2:123456789012:application-inference-profile/custom-id"
-    extra_model_arns = ["arn:aws:bedrock:us-east-1::foundation-model/openai.gpt-6-sol"]
+    extra_model_arns = ["arn:aws:bedrock:eu-west-1::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0"]
   }
   assert {
-    condition     = local.openai_gpt && contains(jsondecode(aws_iam_role_policy.bedrock.policy).Statement[0].Resource, "arn:aws:bedrock:eu-west-2:123456789012:project/default")
-    error_message = "Opaque application profile names must still receive GPT compatibility and project permissions."
+    condition     = local.haiku_4_5 && length(jsondecode(aws_iam_role_policy.bedrock.policy).Statement[0].Resource) == 2
+    error_message = "Opaque application profiles must grant only the profile and destination models."
   }
 }
 
-run "reject_regional_gpt" {
+run "reject_regional_haiku_4_5" {
   command = plan
-  variables { model_id = "openai.gpt-6-sol" }
+  variables { model_id = "anthropic.claude-haiku-4-5-20251001-v1:0" }
   expect_failures = [aws_iam_role_policy.bedrock]
-}
-
-run "gpt_oss_remains_regional" {
-  command = plan
-  variables { model_id = "openai.gpt-oss-120b-1:0" }
-  assert {
-    condition     = !local.openai_gpt && length(local.project_resources) == 0
-    error_message = "GPT OSS regional models must not receive frontier GPT profile requirements or project permissions."
-  }
 }
 
 run "reject_wrong_profile_region" {
   command = plan
   variables {
-    model_id         = "arn:aws:bedrock:us-east-1:123456789012:inference-profile/global.openai.gpt-6-sol"
-    extra_model_arns = ["arn:aws:bedrock:us-east-1::foundation-model/openai.gpt-6-sol"]
+    model_id         = "arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.anthropic.claude-haiku-4-5-20251001-v1:0"
+    extra_model_arns = ["arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0"]
   }
   expect_failures = [aws_iam_role_policy.bedrock]
 }
-

@@ -2,19 +2,27 @@
 param([Parameter(Mandatory)][string] $OutputsFile, [Parameter(Mandatory)][string] $Artifacts)
 . (Join-Path $PSScriptRoot 'common.ps1')
 $deployment = Get-Content -LiteralPath $OutputsFile -Raw | ConvertFrom-Json
-if ($deployment.cloud -ne 'azure') { throw 'Expected Azure Terraform outputs.' }
+if ($deployment.cloud -notin @('azure', 'combo')) { throw 'Expected Azure or combo Terraform outputs.' }
 $release = $deployment.release
 Invoke-AzJson -Arguments @('account', 'set', '--subscription', $release.subscription_id) | Out-Null
 $account = Invoke-AzJson -Arguments @('account', 'show')
 if ($account.tenantId -ne $release.tenant_id) { throw 'Azure CLI and Terraform target tenants differ.' }
 $version = Invoke-AzJson -Arguments @('version')
 if ([version]$version.'azure-cli' -lt [version]'2.80.0') { throw 'Upgrade Azure CLI to at least 2.80.0 for Functions publishing.' }
-$agentFile = Join-Path $Artifacts 'agent.json'
-& node infra/azure/provision-agent.mjs $release.project_endpoint $release.agent_name $release.model_deployment $agentFile
-if ($LASTEXITCODE -ne 0) { throw 'Foundry agent provisioning failed. Resolve model quota/RBAC and rerun npm run deploy:publish.' }
-& node infra/azure/build.mjs --config (Join-Path $Artifacts 'runtime-config.json') --output $Artifacts --agent-config $agentFile
+$modelArguments = @()
+if ($deployment.cloud -eq 'combo') {
+    $modelArguments = @('--combo')
+} else {
+    $agentFile = Join-Path $Artifacts 'agent.json'
+    & node infra/azure/provision-agent.mjs $release.project_endpoint $release.agent_name $release.model_deployment $agentFile
+    if ($LASTEXITCODE -ne 0) { throw 'Foundry agent provisioning failed. Resolve model quota/RBAC and rerun npm run deploy:publish.' }
+    $modelArguments = @('--agent-config', $agentFile)
+}
+& node infra/azure/build.mjs --config (Join-Path $Artifacts 'runtime-config.json') --output $Artifacts @modelArguments
 if ($LASTEXITCODE -ne 0) { throw 'Azure packaging failed.' }
-& node infra/azure/verify.mjs --output $Artifacts
+$verifyArguments = @()
+if ($deployment.cloud -eq 'combo') { $verifyArguments = @('--combo') }
+& node infra/azure/verify.mjs --output $Artifacts @verifyArguments
 if ($LASTEXITCODE -ne 0) { throw 'Azure package validation failed.' }
 $zip = Join-Path $Artifacts 'api.zip'
 Compress-Archive -Path (Join-Path $Artifacts 'api/*') -DestinationPath $zip -Force

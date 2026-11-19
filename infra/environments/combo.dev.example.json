@@ -16,8 +16,16 @@
   "aws": {
     "account_id": "484121865880",
     "region": "eu-west-2",
-    "model_id": "amazon.nova-micro-v1:0",
-    "extra_model_arns": [],
+    "model_id": "arn:aws:bedrock:eu-west-2:484121865880:inference-profile/eu.anthropic.claude-haiku-4-5-20251001-v1:0",
+    "extra_model_arns": [
+      "arn:aws:bedrock:eu-central-1::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0",
+      "arn:aws:bedrock:eu-north-1::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0",
+      "arn:aws:bedrock:eu-south-1::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0",
+      "arn:aws:bedrock:eu-south-2::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0",
+      "arn:aws:bedrock:eu-west-1::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0",
+      "arn:aws:bedrock:eu-west-2::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0",
+      "arn:aws:bedrock:eu-west-3::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0"
+    ],
     "existing_oidc_provider_arn": ""
   }
 }
